@@ -271,7 +271,7 @@ function StatCard({ label, value, icon: Icon, accent }) {
 function ProximamenteCard({ titulo, descripcion, icon: Icon }) {
   return (
     <div className="bg-white dark:bg-black border border-dashed border-slate-300 dark:border-white/10 rounded-2xl p-8 flex flex-col items-center text-center gap-3 max-w-md mx-auto mt-10">
-      <div className="w-12 h-12 rounded-xl bg-[#1E3A32] dark:bg-emerald-900/40 flex items-center justify-center">
+      <div className="w-12 h-12 rounded-xl bg-[#16233D] dark:bg-emerald-900/40 flex items-center justify-center">
         <Icon className="text-xl" />
       </div>
       <h3 className="font-semibold text-slate-800 dark:text-white">{titulo}</h3>
@@ -289,7 +289,7 @@ function PaginaDashboard({ productos, stockBajo, valorStock, gananciaAcumulada, 
         <p className="text-sm text-slate-500 dark:text-white mt-1">Resumen de tu negocio en tiempo real, conectado a la base de datos.</p>
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="Valor en stock" value={`C$${valorStock.toFixed(2)}`} icon={IconPackage} accent="bg-[#1E3A32]" />
+        <StatCard label="Valor en stock" value={`C$${valorStock.toFixed(2)}`} icon={IconPackage} accent="bg-[#16233D]" />
         <StatCard label="Unidades vendidas" value={unidadesVendidas} icon={IconCart} accent="bg-[#2471A3]" />
         <StatCard label="Ganancia acumulada" value={`C$${gananciaAcumulada.toFixed(2)}`} icon={IconChart} accent="bg-emerald-600" />
         <StatCard label="Productos en alerta" value={stockBajo} icon={IconAlert} accent="bg-rose-600" />
@@ -407,7 +407,7 @@ function PaginaCaja() {
           <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Monto inicial (efectivo con el que abrís)</label>
           <input type="number" value={montoApertura} onChange={(e) => setMontoApertura(e.target.value)}
             className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm mb-3 outline-none focus:border-[#E3A73B]" placeholder="0" />
-          <button disabled={procesando} onClick={abrirCaja} className="w-full bg-[#E3A73B] text-[#1E3A32] font-semibold text-sm px-4 py-2 rounded-lg disabled:opacity-50 flex items-center justify-center gap-2">
+          <button disabled={procesando} onClick={abrirCaja} className="w-full bg-[#E3A73B] text-[#16233D] font-semibold text-sm px-4 py-2 rounded-lg disabled:opacity-50 flex items-center justify-center gap-2">
             {procesando && <IconLoading />} Abrir caja
           </button>
 
@@ -428,7 +428,7 @@ function PaginaCaja() {
       ) : (
         <div className="space-y-5">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatCard label="Monto inicial" value={`C$${Number(sesion.monto_inicial).toFixed(2)}`} icon={IconWallet} accent="bg-[#1E3A32]" />
+            <StatCard label="Monto inicial" value={`C$${Number(sesion.monto_inicial).toFixed(2)}`} icon={IconWallet} accent="bg-[#16233D]" />
             <StatCard label="Ingresos" value={`C$${totalIngresos.toFixed(2)}`} icon={IconChart} accent="bg-emerald-600" />
             <StatCard label="Gastos" value={`C$${totalGastos.toFixed(2)}`} icon={IconAlert} accent="bg-rose-600" />
             <StatCard label="Saldo actual" value={`C$${saldoActual.toFixed(2)}`} icon={IconCart} accent="bg-[#2471A3]" />
@@ -447,7 +447,7 @@ function PaginaCaja() {
               <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Monto</label>
               <input type="number" value={nuevoMonto} onChange={(e) => setNuevoMonto(e.target.value)} placeholder="0"
                 className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm mb-3 outline-none focus:border-[#E3A73B]" />
-              <button disabled={procesando} onClick={registrarMovimiento} className="w-full bg-[#E3A73B] text-[#1E3A32] font-semibold text-sm px-4 py-2 rounded-lg disabled:opacity-50 flex items-center justify-center gap-2">
+              <button disabled={procesando} onClick={registrarMovimiento} className="w-full bg-[#E3A73B] text-[#16233D] font-semibold text-sm px-4 py-2 rounded-lg disabled:opacity-50 flex items-center justify-center gap-2">
                 {procesando && <IconLoading />} Registrar
               </button>
               <button disabled={procesando} onClick={cerrarCaja} className="w-full mt-2 border border-rose-300 dark:border-rose-800 text-rose-600 dark:text-rose-400 font-semibold text-sm px-4 py-2 rounded-lg">
@@ -641,7 +641,7 @@ function ModalProducto({ abierto, producto, onGuardar, onCerrar, guardando }) {
         </div>
         <div className="flex gap-2 justify-end mt-5">
           <button onClick={onCerrar} className="px-4 py-2 rounded-lg text-sm font-medium border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white">Cancelar</button>
-          <button disabled={guardando || !form.nombre.trim()} onClick={() => onGuardar(form)} className="px-4 py-2 rounded-lg text-sm font-semibold bg-[#E3A73B] text-[#1E3A32] disabled:opacity-50 flex items-center gap-2">
+          <button disabled={guardando || !form.nombre.trim()} onClick={() => onGuardar(form)} className="px-4 py-2 rounded-lg text-sm font-semibold bg-[#E3A73B] text-[#16233D] disabled:opacity-50 flex items-center gap-2">
             {guardando && <IconLoading />} Guardar
           </button>
         </div>
@@ -697,7 +697,7 @@ function PaginaInventario({ productos, cargando, error, onRecargar, onCrear, onA
           <button onClick={onRecargar} className="flex items-center gap-2 border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white font-medium text-sm px-3 py-2 rounded-lg">
             <IconRefresh className={cargando ? "animate-spin inline-block" : "inline-block"} />
           </button>
-          <button onClick={abrirNuevo} className="flex items-center gap-2 bg-[#E3A73B] text-[#1E3A32] font-semibold text-sm px-4 py-2 rounded-lg hover:brightness-105">
+          <button onClick={abrirNuevo} className="flex items-center gap-2 bg-[#E3A73B] text-[#16233D] font-semibold text-sm px-4 py-2 rounded-lg hover:brightness-105">
             <IconPlus /> Agregar producto
           </button>
         </div>
@@ -719,7 +719,7 @@ function PaginaInventario({ productos, cargando, error, onRecargar, onCrear, onA
         <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl overflow-hidden overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="bg-[#1E3A32] text-white text-xs uppercase tracking-wide">
+              <tr className="bg-[#16233D] text-white text-xs uppercase tracking-wide">
                 <th className="text-left px-4 py-3 font-semibold">Producto</th>
                 <th className="text-left px-4 py-3 font-semibold hidden sm:table-cell">Categoría</th>
                 <th className="text-right px-4 py-3 font-semibold">Stock</th>
@@ -831,9 +831,9 @@ function PaginaHistorial() {
       {error && <div className="bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-sm rounded-lg p-3">{error}</div>}
 
       <div className="flex gap-2 flex-wrap">
-        <button onClick={() => setFiltro("todos")} className={`text-xs font-medium px-3 py-1.5 rounded-full ${filtro === "todos" ? "bg-[#1E3A32] text-white" : "bg-slate-100 dark:bg-neutral-900 text-slate-600 dark:text-white"}`}>Todos</button>
+        <button onClick={() => setFiltro("todos")} className={`text-xs font-medium px-3 py-1.5 rounded-full ${filtro === "todos" ? "bg-[#16233D] text-white" : "bg-slate-100 dark:bg-neutral-900 text-slate-600 dark:text-white"}`}>Todos</button>
         {Object.entries(tiposLabel).map(([key, label]) => (
-          <button key={key} onClick={() => setFiltro(key)} className={`text-xs font-medium px-3 py-1.5 rounded-full ${filtro === key ? "bg-[#1E3A32] text-white" : "bg-slate-100 dark:bg-neutral-900 text-slate-600 dark:text-white"}`}>{label}</button>
+          <button key={key} onClick={() => setFiltro(key)} className={`text-xs font-medium px-3 py-1.5 rounded-full ${filtro === key ? "bg-[#16233D] text-white" : "bg-slate-100 dark:bg-neutral-900 text-slate-600 dark:text-white"}`}>{label}</button>
         ))}
       </div>
 
@@ -956,7 +956,7 @@ function PaginaEstadisticas() {
         <StatCard label="Unidades vendidas" value={unidadesVendidas} icon={IconCart} accent="bg-[#2471A3]" />
         <StatCard label="Ganancia total" value={`C$${gananciaTotal.toFixed(2)}`} icon={IconChart} accent="bg-emerald-600" />
         <StatCard label="Pérdidas totales" value={`C$${perdidaTotal.toFixed(2)}`} icon={IconAlert} accent="bg-rose-600" />
-        <StatCard label="Ganancia neta" value={`C$${(gananciaTotal - perdidaTotal).toFixed(2)}`} icon={IconWallet} accent="bg-[#1E3A32]" />
+        <StatCard label="Ganancia neta" value={`C$${(gananciaTotal - perdidaTotal).toFixed(2)}`} icon={IconWallet} accent="bg-[#16233D]" />
       </div>
 
       <div className="grid lg:grid-cols-2 gap-4">
@@ -1098,7 +1098,7 @@ function PantallaLogin({ onAutenticado }) {
         )}
         {modo !== "login" && <div className="mb-1" />}
 
-        <button disabled={cargando} onClick={enviar} className="w-full bg-[#E3A73B] text-[#1E3A32] font-semibold text-sm px-4 py-2.5 rounded-lg disabled:opacity-50 flex items-center justify-center gap-2 mt-3">
+        <button disabled={cargando} onClick={enviar} className="w-full bg-[#E3A73B] text-[#16233D] font-semibold text-sm px-4 py-2.5 rounded-lg disabled:opacity-50 flex items-center justify-center gap-2 mt-3">
           {cargando && <IconLoading />} {modo === "login" ? "Entrar" : modo === "registro" ? "Crear cuenta" : "Enviar correo de recuperación"}
         </button>
 
@@ -1142,7 +1142,7 @@ function PantallaNuevaPassword({ accessToken, onListo }) {
         {listo ? (
           <>
             <p className="text-sm text-slate-500 mb-5">Tu contraseña se cambió correctamente.</p>
-            <button onClick={onListo} className="w-full bg-[#E3A73B] text-[#1E3A32] font-semibold text-sm px-4 py-2.5 rounded-lg">Ir a iniciar sesión</button>
+            <button onClick={onListo} className="w-full bg-[#E3A73B] text-[#16233D] font-semibold text-sm px-4 py-2.5 rounded-lg">Ir a iniciar sesión</button>
           </>
         ) : (
           <>
@@ -1162,7 +1162,7 @@ function PantallaNuevaPassword({ accessToken, onListo }) {
             <input type={verPassword ? "text" : "password"} value={confirmarPassword} onChange={(e) => setConfirmarPassword(e.target.value)} placeholder="Repetí tu contraseña"
               className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm mb-4 outline-none focus:border-[#E3A73B]" />
 
-            <button disabled={cargando} onClick={enviar} className="w-full bg-[#E3A73B] text-[#1E3A32] font-semibold text-sm px-4 py-2.5 rounded-lg disabled:opacity-50 flex items-center justify-center gap-2">
+            <button disabled={cargando} onClick={enviar} className="w-full bg-[#E3A73B] text-[#16233D] font-semibold text-sm px-4 py-2.5 rounded-lg disabled:opacity-50 flex items-center justify-center gap-2">
               {cargando && <IconLoading />} Guardar nueva contraseña
             </button>
           </>
@@ -1208,7 +1208,14 @@ function App() {
 
 function AppInterna({ sesion, onCerrarSesion }) {
   const [pagina, setPagina] = useState("inventario");
-  const [modoOscuro, setModoOscuro] = useState(false);
+  const [modoOscuro, setModoOscuro] = useState(() => {
+    try { return localStorage.getItem("mi_negocio_modo_oscuro") === "1"; }
+    catch (e) { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("mi_negocio_modo_oscuro", modoOscuro ? "1" : "0"); }
+    catch (e) {}
+  }, [modoOscuro]);
   const [sidebarAbierto, setSidebarAbierto] = useState(false);
   const [nombreNegocio, setNombreNegocio] = useState("Mi Negocio");
   const [productos, setProductos] = useState([]);
@@ -1257,7 +1264,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
     <div className={modoOscuro ? "dark" : ""}>
       <div className="min-h-screen bg-slate-50 dark:bg-black flex transition-colors">
         {sidebarAbierto && <div className="fixed inset-0 bg-black/40 z-20 lg:hidden" onClick={() => setSidebarAbierto(false)} />}
-        <aside className={`fixed lg:static z-30 top-0 left-0 h-full w-64 bg-[#1E3A32] text-white flex flex-col transition-transform duration-200 ${sidebarAbierto ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}>
+        <aside className={`fixed lg:static z-30 top-0 left-0 h-full w-64 bg-[#16233D] text-white flex flex-col transition-transform duration-200 ${sidebarAbierto ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}>
           <div className="p-5 border-b border-white/10 flex items-center justify-between">
             <div>
               <input value={nombreNegocio} onChange={(e) => setNombreNegocio(e.target.value)} className="bg-transparent font-bold text-lg outline-none border-b border-dashed border-white/20 w-full font-display" />
@@ -1268,7 +1275,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
           <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
             {NAV_ITEMS.map((item) => (
               <button key={item.id} onClick={() => { setPagina(item.id); setSidebarAbierto(false); }}
-                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${pagina === item.id ? "bg-[#E3A73B] text-[#1E3A32]" : "text-white/80 hover:bg-white/10"}`}>
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${pagina === item.id ? "bg-[#E3A73B] text-[#16233D]" : "text-white/80 hover:bg-white/10"}`}>
                 <span className="flex items-center gap-2.5"><item.icon /> {item.label}</span>
                 {!item.listo && <span className="text-[9px] uppercase font-bold bg-white/15 px-1.5 py-0.5 rounded">pronto</span>}
               </button>
@@ -1292,7 +1299,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
               <button onClick={onCerrarSesion} title="Cerrar sesión" className="text-xs font-medium px-3 py-1.5 rounded-lg border border-slate-200 dark:border-white/20 text-slate-500 dark:text-white hover:bg-slate-100 dark:hover:bg-slate-700/60">
                 Cerrar sesión
               </button>
-              <div className="w-9 h-9 rounded-full bg-[#E3A73B] text-[#1E3A32] flex items-center justify-center font-bold text-sm">
+              <div className="w-9 h-9 rounded-full bg-[#E3A73B] text-[#16233D] flex items-center justify-center font-bold text-sm">
                 {(sesion?.user?.email || "?").charAt(0).toUpperCase()}
               </div>
             </div>
