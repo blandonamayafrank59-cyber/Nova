@@ -1112,7 +1112,73 @@ function PantallaLogin({ onAutenticado }) {
   );
 }
 
+function PantallaNuevaPassword({ accessToken, onListo }) {
+  const [password, setPassword] = useState("");
+  const [confirmarPassword, setConfirmarPassword] = useState("");
+  const [verPassword, setVerPassword] = useState(false);
+  const [cargando, setCargando] = useState(false);
+  const [error, setError] = useState(null);
+  const [listo, setListo] = useState(false);
+
+  const enviar = async () => {
+    setError(null);
+    if (password.length < 6) { setError("La contraseña debe tener al menos 6 caracteres"); return; }
+    if (password !== confirmarPassword) { setError("Las contraseñas no coinciden"); return; }
+    setCargando(true);
+    try {
+      await authApi.cambiarPassword(accessToken, password);
+      setListo(true);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setCargando(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+      <div className="bg-white border border-slate-200 rounded-2xl p-6 w-full max-w-sm">
+        <h1 className="text-xl font-bold text-slate-800 font-display mb-1">Mi Negocio</h1>
+        {listo ? (
+          <>
+            <p className="text-sm text-slate-500 mb-5">Tu contraseña se cambió correctamente.</p>
+            <button onClick={onListo} className="w-full bg-[#E3A73B] text-[#1E3A32] font-semibold text-sm px-4 py-2.5 rounded-lg">Ir a iniciar sesión</button>
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-slate-500 mb-5">Elegí tu nueva contraseña</p>
+            {error && <div className="bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-lg p-2.5 mb-3">{error}</div>}
+
+            <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Nueva contraseña</label>
+            <div className="relative mb-3">
+              <input type={verPassword ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres"
+                className="w-full px-3 py-2 pr-10 rounded-lg border border-slate-200 bg-white text-sm outline-none focus:border-[#E3A73B]" />
+              <button type="button" onClick={() => setVerPassword(!verPassword)} className="absolute right-2 top-1/2 -translate-y-1/2 text-sm">
+                {verPassword ? <IconEyeOff /> : <IconEye />}
+              </button>
+            </div>
+
+            <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Confirmar contraseña</label>
+            <input type={verPassword ? "text" : "password"} value={confirmarPassword} onChange={(e) => setConfirmarPassword(e.target.value)} placeholder="Repetí tu contraseña"
+              className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm mb-4 outline-none focus:border-[#E3A73B]" />
+
+            <button disabled={cargando} onClick={enviar} className="w-full bg-[#E3A73B] text-[#1E3A32] font-semibold text-sm px-4 py-2.5 rounded-lg disabled:opacity-50 flex items-center justify-center gap-2">
+              {cargando && <IconLoading />} Guardar nueva contraseña
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function App() {
+  const [tokenRecuperacion] = useState(() => {
+    const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
+    const params = new URLSearchParams(hash);
+    return params.get("type") === "recovery" ? params.get("access_token") : null;
+  });
+
   const [sesion, setSesionState] = useState(() => {
     try { return JSON.parse(localStorage.getItem("mi_negocio_sesion")) || null; }
     catch { return null; }
@@ -1128,6 +1194,10 @@ function App() {
     localStorage.removeItem("mi_negocio_sesion");
     setSesionState(null);
   };
+
+  if (tokenRecuperacion) {
+    return <PantallaNuevaPassword accessToken={tokenRecuperacion} onListo={() => { window.location.hash = ""; window.location.reload(); }} />;
+  }
 
   if (!sesion) {
     return <PantallaLogin onAutenticado={guardarSesion} />;
