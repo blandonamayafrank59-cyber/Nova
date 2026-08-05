@@ -22,7 +22,7 @@
   .dark input, .dark select, .dark textarea{ color-scheme: dark; background-color:#0f172a; color:#e2e8f0; }
 </style>
 </head>
-<body class="bg-slate-50 dark:bg-slate-900">
+<body class="bg-slate-50 dark:bg-black">
 <div id="root"></div>
 
 <script type="text/babel-source" id="app-source">
@@ -71,6 +71,27 @@ const authApi = {
         headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${accessToken}` },
       });
     } catch (e) {}
+  },
+  async recuperar(email) {
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/recover`, {
+      method: "POST",
+      headers: { apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.msg || data.error_description || "No se pudo enviar el correo");
+    }
+  },
+  async cambiarPassword(accessToken, password) {
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      method: "PUT",
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.msg || data.error_description || "No se pudo cambiar la contraseña");
+    return data;
   },
 };
 
@@ -209,6 +230,8 @@ const IconCart      = (p) => <Ic {...p}>🛒</Ic>;
 const IconRefresh   = (p) => <Ic {...p}>⟳</Ic>;
 const IconClock     = (p) => <Ic {...p}>🕒</Ic>;
 const IconLoading   = (p) => <Ic {...p} className={(p.className||"")+" animate-spin inline-block"}>⏳</Ic>;
+const IconEye       = (p) => <Ic {...p}>👁️</Ic>;
+const IconEyeOff    = (p) => <Ic {...p}>🙈</Ic>;
 
 const NAV_ITEMS = [
   { id: "dashboard", label: "Panel general", icon: IconDashboard, listo: true },
@@ -223,7 +246,7 @@ const NAV_ITEMS = [
 
 function Badge({ children, tone = "neutral" }) {
   const tones = {
-    neutral: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
+    neutral: "bg-slate-100 text-slate-600 dark:bg-black dark:text-white",
     warn: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
     danger: "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300",
     ok: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
@@ -233,26 +256,26 @@ function Badge({ children, tone = "neutral" }) {
 
 function StatCard({ label, value, icon: Icon, accent }) {
   return (
-    <div className="bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 rounded-2xl p-4 flex flex-col gap-3">
+    <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl p-4 flex flex-col gap-3">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide">{label}</span>
+        <span className="text-xs font-medium text-slate-500 dark:text-white uppercase tracking-wide">{label}</span>
         <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${accent}`}>
           <Icon className="text-sm" />
         </div>
       </div>
-      <div className="text-2xl font-bold text-slate-800 dark:text-slate-100 font-mono">{value}</div>
+      <div className="text-2xl font-bold text-slate-800 dark:text-white font-mono">{value}</div>
     </div>
   );
 }
 
 function ProximamenteCard({ titulo, descripcion, icon: Icon }) {
   return (
-    <div className="bg-white dark:bg-slate-800/60 border border-dashed border-slate-300 dark:border-slate-700 rounded-2xl p-8 flex flex-col items-center text-center gap-3 max-w-md mx-auto mt-10">
+    <div className="bg-white dark:bg-black border border-dashed border-slate-300 dark:border-white/10 rounded-2xl p-8 flex flex-col items-center text-center gap-3 max-w-md mx-auto mt-10">
       <div className="w-12 h-12 rounded-xl bg-[#1E3A32] dark:bg-emerald-900/40 flex items-center justify-center">
         <Icon className="text-xl" />
       </div>
-      <h3 className="font-semibold text-slate-800 dark:text-slate-100">{titulo}</h3>
-      <p className="text-sm text-slate-500 dark:text-slate-400">{descripcion}</p>
+      <h3 className="font-semibold text-slate-800 dark:text-white">{titulo}</h3>
+      <p className="text-sm text-slate-500 dark:text-white">{descripcion}</p>
       <Badge tone="warn">Próximamente</Badge>
     </div>
   );
@@ -262,8 +285,8 @@ function PaginaDashboard({ productos, stockBajo, valorStock, gananciaAcumulada, 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-bold text-slate-800 dark:text-slate-100 font-display">Panel general</h1>
-        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Resumen de tu negocio en tiempo real, conectado a la base de datos.</p>
+        <h1 className="text-xl font-bold text-slate-800 dark:text-white font-display">Panel general</h1>
+        <p className="text-sm text-slate-500 dark:text-white mt-1">Resumen de tu negocio en tiempo real, conectado a la base de datos.</p>
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="Valor en stock" value={`C$${valorStock.toFixed(2)}`} icon={IconPackage} accent="bg-[#1E3A32]" />
@@ -271,17 +294,17 @@ function PaginaDashboard({ productos, stockBajo, valorStock, gananciaAcumulada, 
         <StatCard label="Ganancia acumulada" value={`C$${gananciaAcumulada.toFixed(2)}`} icon={IconChart} accent="bg-emerald-600" />
         <StatCard label="Productos en alerta" value={stockBajo} icon={IconAlert} accent="bg-rose-600" />
       </div>
-      <div className="bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 rounded-2xl p-5">
+      <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl p-5">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="font-semibold text-slate-800 dark:text-slate-100 text-sm">Productos con stock bajo</h2>
+          <h2 className="font-semibold text-slate-800 dark:text-white text-sm">Productos con stock bajo</h2>
           <Badge tone="danger">{stockBajo} en alerta</Badge>
         </div>
         <div className="space-y-2">
           {productos.filter(p => p.cantidad <= p.minimo).map((p) => (
             <div key={p.id} className="flex items-center justify-between py-2 px-3 rounded-lg bg-rose-50 dark:bg-rose-900/10">
               <div>
-                <div className="text-sm font-medium text-slate-700 dark:text-slate-200">{p.nombre}</div>
-                <div className="text-xs text-slate-500 dark:text-slate-400">{p.categoria}</div>
+                <div className="text-sm font-medium text-slate-700 dark:text-white">{p.nombre}</div>
+                <div className="text-xs text-slate-500 dark:text-white">{p.categoria}</div>
               </div>
               <div className="text-right">
                 <div className="text-sm font-mono font-semibold text-rose-600 dark:text-rose-400">{p.cantidad} u.</div>
@@ -372,28 +395,28 @@ function PaginaCaja() {
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="text-xl font-bold text-slate-800 dark:text-slate-100 font-display">Control de caja</h1>
-        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Registrá entradas y salidas de dinero del día.</p>
+        <h1 className="text-xl font-bold text-slate-800 dark:text-white font-display">Control de caja</h1>
+        <p className="text-sm text-slate-500 dark:text-white mt-1">Registrá entradas y salidas de dinero del día.</p>
       </div>
 
       {error && <div className="bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-sm rounded-lg p-3">{error}</div>}
 
       {!sesion ? (
-        <div className="bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 rounded-2xl p-6 max-w-sm">
-          <h2 className="font-semibold text-slate-800 dark:text-slate-100 mb-3">Abrir caja</h2>
-          <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase mb-1">Monto inicial (efectivo con el que abrís)</label>
+        <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl p-6 max-w-sm">
+          <h2 className="font-semibold text-slate-800 dark:text-white mb-3">Abrir caja</h2>
+          <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Monto inicial (efectivo con el que abrís)</label>
           <input type="number" value={montoApertura} onChange={(e) => setMontoApertura(e.target.value)}
-            className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm mb-3 outline-none focus:border-[#E3A73B]" placeholder="0" />
+            className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm mb-3 outline-none focus:border-[#E3A73B]" placeholder="0" />
           <button disabled={procesando} onClick={abrirCaja} className="w-full bg-[#E3A73B] text-[#1E3A32] font-semibold text-sm px-4 py-2 rounded-lg disabled:opacity-50 flex items-center justify-center gap-2">
             {procesando && <IconLoading />} Abrir caja
           </button>
 
           {historial.length > 0 && (
-            <div className="mt-6 pt-4 border-t border-slate-100 dark:border-slate-700">
-              <h3 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase mb-2">Cajas anteriores</h3>
+            <div className="mt-6 pt-4 border-t border-slate-100 dark:border-white/10">
+              <h3 className="text-xs font-semibold text-slate-500 dark:text-white uppercase mb-2">Cajas anteriores</h3>
               <div className="space-y-2">
                 {historial.map(h => (
-                  <div key={h.id} className="flex justify-between text-xs text-slate-500 dark:text-slate-400 py-1">
+                  <div key={h.id} className="flex justify-between text-xs text-slate-500 dark:text-white py-1">
                     <span>{new Date(h.fecha_cierre).toLocaleDateString()}</span>
                     <span className="font-mono">C${Number(h.monto_inicial).toFixed(2)} → C${Number(h.monto_final).toFixed(2)}</span>
                   </div>
@@ -412,18 +435,18 @@ function PaginaCaja() {
           </div>
 
           <div className="grid lg:grid-cols-2 gap-4">
-            <div className="bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 rounded-2xl p-5">
-              <h2 className="font-semibold text-slate-800 dark:text-slate-100 text-sm mb-3">Registrar movimiento</h2>
+            <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl p-5">
+              <h2 className="font-semibold text-slate-800 dark:text-white text-sm mb-3">Registrar movimiento</h2>
               <div className="flex gap-2 mb-3">
-                <button onClick={() => setNuevoTipo("ingreso")} className={`flex-1 py-2 rounded-lg text-sm font-medium ${nuevoTipo === "ingreso" ? "bg-emerald-600 text-white" : "bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300"}`}>Entrada</button>
-                <button onClick={() => setNuevoTipo("gasto")} className={`flex-1 py-2 rounded-lg text-sm font-medium ${nuevoTipo === "gasto" ? "bg-rose-600 text-white" : "bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300"}`}>Salida</button>
+                <button onClick={() => setNuevoTipo("ingreso")} className={`flex-1 py-2 rounded-lg text-sm font-medium ${nuevoTipo === "ingreso" ? "bg-emerald-600 text-white" : "bg-slate-100 dark:bg-neutral-900 text-slate-600 dark:text-white"}`}>Entrada</button>
+                <button onClick={() => setNuevoTipo("gasto")} className={`flex-1 py-2 rounded-lg text-sm font-medium ${nuevoTipo === "gasto" ? "bg-rose-600 text-white" : "bg-slate-100 dark:bg-neutral-900 text-slate-600 dark:text-white"}`}>Salida</button>
               </div>
-              <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase mb-1">Descripción</label>
+              <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Descripción</label>
               <input value={nuevaDescripcion} onChange={(e) => setNuevaDescripcion(e.target.value)} placeholder="Ej: Venta del día, compra de bolsas..."
-                className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm mb-3 outline-none focus:border-[#E3A73B]" />
-              <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase mb-1">Monto</label>
+                className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm mb-3 outline-none focus:border-[#E3A73B]" />
+              <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Monto</label>
               <input type="number" value={nuevoMonto} onChange={(e) => setNuevoMonto(e.target.value)} placeholder="0"
-                className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm mb-3 outline-none focus:border-[#E3A73B]" />
+                className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm mb-3 outline-none focus:border-[#E3A73B]" />
               <button disabled={procesando} onClick={registrarMovimiento} className="w-full bg-[#E3A73B] text-[#1E3A32] font-semibold text-sm px-4 py-2 rounded-lg disabled:opacity-50 flex items-center justify-center gap-2">
                 {procesando && <IconLoading />} Registrar
               </button>
@@ -432,14 +455,14 @@ function PaginaCaja() {
               </button>
             </div>
 
-            <div className="bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 rounded-2xl p-5">
-              <h2 className="font-semibold text-slate-800 dark:text-slate-100 text-sm mb-3">Movimientos de hoy</h2>
+            <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl p-5">
+              <h2 className="font-semibold text-slate-800 dark:text-white text-sm mb-3">Movimientos de hoy</h2>
               <div className="space-y-2 max-h-96 overflow-y-auto">
                 {movimientos.length === 0 && <p className="text-sm text-slate-400 text-center py-6">Todavía no hay movimientos</p>}
                 {movimientos.map(m => (
-                  <div key={m.id} className="flex justify-between items-center py-2 px-3 rounded-lg bg-slate-50 dark:bg-slate-700/30">
+                  <div key={m.id} className="flex justify-between items-center py-2 px-3 rounded-lg bg-slate-50 dark:bg-neutral-900">
                     <div>
-                      <div className="text-sm font-medium text-slate-700 dark:text-slate-200">{m.descripcion || (m.tipo === "ingreso" ? "Entrada de dinero" : "Salida de dinero")}</div>
+                      <div className="text-sm font-medium text-slate-700 dark:text-white">{m.descripcion || (m.tipo === "ingreso" ? "Entrada de dinero" : "Salida de dinero")}</div>
                       <div className="text-xs text-slate-400 font-mono">{new Date(m.creado_en).toLocaleTimeString()}</div>
                     </div>
                     <div className={`font-mono font-semibold text-sm ${m.tipo === "ingreso" ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
@@ -509,27 +532,27 @@ function PaginaPerdidas({ productos, onActualizarProducto, onRecargarProductos }
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="text-xl font-bold text-slate-800 dark:text-slate-100 font-display">Pérdidas</h1>
-        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Registrá productos dañados, perdidos o vencidos — se descuentan del inventario.</p>
+        <h1 className="text-xl font-bold text-slate-800 dark:text-white font-display">Pérdidas</h1>
+        <p className="text-sm text-slate-500 dark:text-white mt-1">Registrá productos dañados, perdidos o vencidos — se descuentan del inventario.</p>
       </div>
 
       {error && <div className="bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-sm rounded-lg p-3">{error}</div>}
 
       <div className="grid lg:grid-cols-3 gap-4">
-        <div className="bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 rounded-2xl p-5">
-          <h2 className="font-semibold text-slate-800 dark:text-slate-100 text-sm mb-3">Registrar pérdida</h2>
-          <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase mb-1">Producto</label>
+        <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl p-5">
+          <h2 className="font-semibold text-slate-800 dark:text-white text-sm mb-3">Registrar pérdida</h2>
+          <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Producto</label>
           <select value={productoId} onChange={(e) => setProductoId(e.target.value)}
-            className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm mb-3 outline-none focus:border-[#E3A73B]">
+            className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm mb-3 outline-none focus:border-[#E3A73B]">
             <option value="">Seleccioná un producto</option>
             {productos.map(p => <option key={p.id} value={p.id}>{p.nombre} (stock: {p.cantidad})</option>)}
           </select>
-          <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase mb-1">Cantidad perdida</label>
+          <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Cantidad perdida</label>
           <input type="number" value={cantidad} onChange={(e) => setCantidad(e.target.value)} placeholder="0"
-            className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm mb-3 outline-none focus:border-[#E3A73B]" />
-          <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase mb-1">Motivo</label>
+            className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm mb-3 outline-none focus:border-[#E3A73B]" />
+          <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Motivo</label>
           <select value={motivo} onChange={(e) => setMotivo(e.target.value)}
-            className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm mb-3 outline-none focus:border-[#E3A73B]">
+            className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm mb-3 outline-none focus:border-[#E3A73B]">
             <option value="dañado">Producto dañado</option>
             <option value="perdido">Producto perdido</option>
             <option value="vencido">Producto vencido</option>
@@ -546,8 +569,8 @@ function PaginaPerdidas({ productos, onActualizarProducto, onRecargarProductos }
 
         <div className="lg:col-span-2 space-y-4">
           <StatCard label="Total perdido acumulado" value={`C$${totalPerdido.toFixed(2)}`} icon={IconAlert} accent="bg-rose-600" />
-          <div className="bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 rounded-2xl p-5">
-            <h2 className="font-semibold text-slate-800 dark:text-slate-100 text-sm mb-3">Historial de pérdidas</h2>
+          <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl p-5">
+            <h2 className="font-semibold text-slate-800 dark:text-white text-sm mb-3">Historial de pérdidas</h2>
             {cargando ? (
               <div className="flex items-center gap-2 text-sm text-slate-400 py-4"><IconLoading /> Cargando...</div>
             ) : perdidas.length === 0 ? (
@@ -557,7 +580,7 @@ function PaginaPerdidas({ productos, onActualizarProducto, onRecargarProductos }
                 {perdidas.map(p => (
                   <div key={p.id} className="flex justify-between items-center py-2 px-3 rounded-lg bg-rose-50/60 dark:bg-rose-900/10">
                     <div>
-                      <div className="text-sm font-medium text-slate-700 dark:text-slate-200">{p.producto_nombre}</div>
+                      <div className="text-sm font-medium text-slate-700 dark:text-white">{p.producto_nombre}</div>
                       <div className="text-xs text-slate-400">{p.motivo} · {p.cantidad} u. · {new Date(p.creado_en).toLocaleString()}</div>
                     </div>
                     <div className="font-mono font-semibold text-sm text-rose-600 dark:text-rose-400">-C${Number(p.valor_perdido).toFixed(2)}</div>
@@ -591,8 +614,8 @@ function ModalProducto({ abierto, producto, onGuardar, onCerrar, guardando }) {
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-40">
-      <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 w-full max-w-sm max-h-[90vh] overflow-y-auto">
-        <h2 className="font-semibold text-slate-800 dark:text-slate-100 mb-4 font-display">{producto ? "Editar producto" : "Agregar producto"}</h2>
+      <div className="bg-white dark:bg-black rounded-2xl p-6 w-full max-w-sm max-h-[90vh] overflow-y-auto">
+        <h2 className="font-semibold text-slate-800 dark:text-white mb-4 font-display">{producto ? "Editar producto" : "Agregar producto"}</h2>
         <div className="space-y-3">
           {[
             { key: "nombre", label: "Nombre del producto", type: "text" },
@@ -603,21 +626,21 @@ function ModalProducto({ abierto, producto, onGuardar, onCerrar, guardando }) {
             { key: "minimo", label: "Alertar cuando queden menos de", type: "number" },
           ].map((campo) => (
             <div key={campo.key}>
-              <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase mb-1">{campo.label}</label>
+              <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">{campo.label}</label>
               <input
                 type={campo.type}
                 value={form[campo.key]}
                 onChange={(e) => setForm({ ...form, [campo.key]: e.target.value })}
-                className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-slate-700 dark:text-slate-200 outline-none focus:border-[#E3A73B]"
+                className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]"
               />
             </div>
           ))}
-          <div className="bg-slate-50 dark:bg-slate-700/40 rounded-lg p-3 text-xs text-slate-500 dark:text-slate-400">
+          <div className="bg-slate-50 dark:bg-neutral-900 rounded-lg p-3 text-xs text-slate-500 dark:text-white">
             Ganancia: <b className="text-emerald-600 dark:text-emerald-400">C${ganancia.toFixed(2)}</b> · Margen: <b className="text-emerald-600 dark:text-emerald-400">{margen}%</b>
           </div>
         </div>
         <div className="flex gap-2 justify-end mt-5">
-          <button onClick={onCerrar} className="px-4 py-2 rounded-lg text-sm font-medium border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300">Cancelar</button>
+          <button onClick={onCerrar} className="px-4 py-2 rounded-lg text-sm font-medium border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white">Cancelar</button>
           <button disabled={guardando || !form.nombre.trim()} onClick={() => onGuardar(form)} className="px-4 py-2 rounded-lg text-sm font-semibold bg-[#E3A73B] text-[#1E3A32] disabled:opacity-50 flex items-center gap-2">
             {guardando && <IconLoading />} Guardar
           </button>
@@ -667,11 +690,11 @@ function PaginaInventario({ productos, cargando, error, onRecargar, onCrear, onA
     <div className="space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-xl font-bold text-slate-800 dark:text-slate-100 font-display">Inventario</h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Conectado a la base de datos en la nube — se sincroniza entre dispositivos.</p>
+          <h1 className="text-xl font-bold text-slate-800 dark:text-white font-display">Inventario</h1>
+          <p className="text-sm text-slate-500 dark:text-white mt-1">Conectado a la base de datos en la nube — se sincroniza entre dispositivos.</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={onRecargar} className="flex items-center gap-2 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-medium text-sm px-3 py-2 rounded-lg">
+          <button onClick={onRecargar} className="flex items-center gap-2 border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white font-medium text-sm px-3 py-2 rounded-lg">
             <IconRefresh className={cargando ? "animate-spin inline-block" : "inline-block"} />
           </button>
           <button onClick={abrirNuevo} className="flex items-center gap-2 bg-[#E3A73B] text-[#1E3A32] font-semibold text-sm px-4 py-2 rounded-lg hover:brightness-105">
@@ -685,7 +708,7 @@ function PaginaInventario({ productos, cargando, error, onRecargar, onCrear, onA
       <div className="relative max-w-xs">
         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><IconSearch /></span>
         <input value={busqueda} onChange={(e) => setBusqueda(e.target.value)} placeholder="Buscar producto..."
-          className="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-700 dark:text-slate-200 outline-none focus:border-[#E3A73B]" />
+          className="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
       </div>
 
       {cargando && productos.length === 0 ? (
@@ -693,7 +716,7 @@ function PaginaInventario({ productos, cargando, error, onRecargar, onCrear, onA
       ) : filtrados.length === 0 ? (
         <div className="text-center py-16 text-slate-400 text-sm">{productos.length === 0 ? "Todavía no hay productos — agregá el primero." : "Sin resultados para tu búsqueda."}</div>
       ) : (
-        <div className="bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 rounded-2xl overflow-hidden overflow-x-auto">
+        <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl overflow-hidden overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-[#1E3A32] text-white text-xs uppercase tracking-wide">
@@ -712,18 +735,18 @@ function PaginaInventario({ productos, cargando, error, onRecargar, onCrear, onA
                 const bajo = p.cantidad <= p.minimo;
                 const margen = p.costo > 0 ? ((p.venta - p.costo) / p.costo * 100).toFixed(0) : 0;
                 return (
-                  <tr key={p.id} className={`border-t border-slate-100 dark:border-slate-700/60 ${i % 2 === 1 ? "bg-slate-50/60 dark:bg-slate-800/30" : ""}`}>
-                    <td className="px-4 py-3 font-medium text-slate-700 dark:text-slate-200">{p.nombre}</td>
-                    <td className="px-4 py-3 text-slate-500 dark:text-slate-400 hidden sm:table-cell">{p.categoria}</td>
-                    <td className="px-4 py-3 text-right font-mono text-slate-700 dark:text-slate-200">{p.cantidad}</td>
-                    <td className="px-4 py-3 text-right font-mono text-slate-500 dark:text-slate-400 hidden md:table-cell">C${Number(p.costo).toFixed(2)}</td>
-                    <td className="px-4 py-3 text-right font-mono text-slate-700 dark:text-slate-200">C${Number(p.venta).toFixed(2)}</td>
+                  <tr key={p.id} className={`border-t border-slate-100 dark:border-white/10 ${i % 2 === 1 ? "bg-slate-50/60 dark:bg-black" : ""}`}>
+                    <td className="px-4 py-3 font-medium text-slate-700 dark:text-white">{p.nombre}</td>
+                    <td className="px-4 py-3 text-slate-500 dark:text-white hidden sm:table-cell">{p.categoria}</td>
+                    <td className="px-4 py-3 text-right font-mono text-slate-700 dark:text-white">{p.cantidad}</td>
+                    <td className="px-4 py-3 text-right font-mono text-slate-500 dark:text-white hidden md:table-cell">C${Number(p.costo).toFixed(2)}</td>
+                    <td className="px-4 py-3 text-right font-mono text-slate-700 dark:text-white">C${Number(p.venta).toFixed(2)}</td>
                     <td className="px-4 py-3 text-right font-mono text-emerald-600 dark:text-emerald-400 hidden md:table-cell">{margen}%</td>
                     <td className="px-4 py-3 text-center">{bajo ? <Badge tone="danger">Stock bajo</Badge> : <Badge tone="ok">Bien</Badge>}</td>
                     <td className="px-4 py-3">
                       <div className="flex gap-1 justify-end">
                         <button onClick={() => vender(p, 1)} className="text-xs px-2 py-1 rounded bg-[#2471A3] text-white font-medium">-1</button>
-                        <button onClick={() => abrirEditar(p)} className="text-xs px-2 py-1 rounded border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300">Editar</button>
+                        <button onClick={() => abrirEditar(p)} className="text-xs px-2 py-1 rounded border border-slate-200 dark:border-white/20 text-slate-600 dark:text-white">Editar</button>
                         <button onClick={() => { if (confirm("¿Eliminar este producto?")) onEliminar(p.id); }} className="text-xs px-2 py-1 rounded text-rose-600 dark:text-rose-400">Eliminar</button>
                       </div>
                     </td>
@@ -801,20 +824,20 @@ function PaginaHistorial() {
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="text-xl font-bold text-slate-800 dark:text-slate-100 font-display">Historial</h1>
-        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Todo lo que ha pasado en tu negocio, en un solo lugar.</p>
+        <h1 className="text-xl font-bold text-slate-800 dark:text-white font-display">Historial</h1>
+        <p className="text-sm text-slate-500 dark:text-white mt-1">Todo lo que ha pasado en tu negocio, en un solo lugar.</p>
       </div>
 
       {error && <div className="bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-sm rounded-lg p-3">{error}</div>}
 
       <div className="flex gap-2 flex-wrap">
-        <button onClick={() => setFiltro("todos")} className={`text-xs font-medium px-3 py-1.5 rounded-full ${filtro === "todos" ? "bg-[#1E3A32] text-white" : "bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300"}`}>Todos</button>
+        <button onClick={() => setFiltro("todos")} className={`text-xs font-medium px-3 py-1.5 rounded-full ${filtro === "todos" ? "bg-[#1E3A32] text-white" : "bg-slate-100 dark:bg-neutral-900 text-slate-600 dark:text-white"}`}>Todos</button>
         {Object.entries(tiposLabel).map(([key, label]) => (
-          <button key={key} onClick={() => setFiltro(key)} className={`text-xs font-medium px-3 py-1.5 rounded-full ${filtro === key ? "bg-[#1E3A32] text-white" : "bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300"}`}>{label}</button>
+          <button key={key} onClick={() => setFiltro(key)} className={`text-xs font-medium px-3 py-1.5 rounded-full ${filtro === key ? "bg-[#1E3A32] text-white" : "bg-slate-100 dark:bg-neutral-900 text-slate-600 dark:text-white"}`}>{label}</button>
         ))}
       </div>
 
-      <div className="bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 rounded-2xl p-5">
+      <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl p-5">
         {cargando ? (
           <div className="flex items-center gap-2 text-sm text-slate-400 py-6"><IconLoading /> Cargando historial...</div>
         ) : filtrados.length === 0 ? (
@@ -822,11 +845,11 @@ function PaginaHistorial() {
         ) : (
           <div className="space-y-2 max-h-[32rem] overflow-y-auto">
             {filtrados.map((e, i) => (
-              <div key={i} className="flex justify-between items-center py-2.5 px-3 rounded-lg bg-slate-50 dark:bg-slate-700/30">
+              <div key={i} className="flex justify-between items-center py-2.5 px-3 rounded-lg bg-slate-50 dark:bg-neutral-900">
                 <div className="flex items-center gap-3">
                   <Badge tone={tonos[e.tipo]}>{tiposLabel[e.tipo]}</Badge>
                   <div>
-                    <div className="text-sm font-medium text-slate-700 dark:text-slate-200">{e.descripcion}</div>
+                    <div className="text-sm font-medium text-slate-700 dark:text-white">{e.descripcion}</div>
                     <div className="text-xs text-slate-400 font-mono">{new Date(e.fecha).toLocaleString()}</div>
                   </div>
                 </div>
@@ -923,8 +946,8 @@ function PaginaEstadisticas() {
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="text-xl font-bold text-slate-800 dark:text-slate-100 font-display">Estadísticas</h1>
-        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Cómo va creciendo tu negocio.</p>
+        <h1 className="text-xl font-bold text-slate-800 dark:text-white font-display">Estadísticas</h1>
+        <p className="text-sm text-slate-500 dark:text-white mt-1">Cómo va creciendo tu negocio.</p>
       </div>
 
       {error && <div className="bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-sm rounded-lg p-3">{error}</div>}
@@ -937,8 +960,8 @@ function PaginaEstadisticas() {
       </div>
 
       <div className="grid lg:grid-cols-2 gap-4">
-        <div className="bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 rounded-2xl p-5">
-          <h2 className="font-semibold text-slate-800 dark:text-slate-100 text-sm mb-3">Ventas últimos 14 días</h2>
+        <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl p-5">
+          <h2 className="font-semibold text-slate-800 dark:text-white text-sm mb-3">Ventas últimos 14 días</h2>
           {ventas.length === 0 ? <p className="text-sm text-slate-400 py-8 text-center">Todavía no hay ventas registradas</p> : (
             <GraficaCanvas tipo="line" id="ventasDia" data={{
               labels: dias.map(d => d.slice(5)),
@@ -947,23 +970,23 @@ function PaginaEstadisticas() {
           )}
         </div>
 
-        <div className="bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 rounded-2xl p-5">
-          <h2 className="font-semibold text-slate-800 dark:text-slate-100 text-sm mb-3">Productos más vendidos</h2>
+        <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl p-5">
+          <h2 className="font-semibold text-slate-800 dark:text-white text-sm mb-3">Productos más vendidos</h2>
           {topProductos.length === 0 ? <p className="text-sm text-slate-400 py-8 text-center">Todavía no hay ventas registradas</p> : (
-            <GraficaCanvas tipo="bar" id="topProductos" data={{
+            <GraficaCanvas tipo="line" id="topProductos" data={{
               labels: topProductos.map(([nombre]) => nombre),
-              datasets: [{ label: "Unidades vendidas", data: topProductos.map(([, cant]) => cant), backgroundColor: "#E3A73B" }],
+              datasets: [{ label: "Unidades vendidas", data: topProductos.map(([, cant]) => cant), borderColor: "#E3A73B", backgroundColor: "#E3A73B22", tension: 0.3, fill: true }],
             }} />
           )}
         </div>
 
-        <div className="lg:col-span-2 bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 rounded-2xl p-5">
-          <h2 className="font-semibold text-slate-800 dark:text-slate-100 text-sm mb-3">Ganancias vs. pérdidas — últimas 6 semanas</h2>
-          <GraficaCanvas tipo="bar" id="gananciaVsPerdida" data={{
+        <div className="lg:col-span-2 bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl p-5">
+          <h2 className="font-semibold text-slate-800 dark:text-white text-sm mb-3">Ganancias vs. pérdidas — últimas 6 semanas</h2>
+          <GraficaCanvas tipo="line" id="gananciaVsPerdida" data={{
             labels: semanas.map(s => s.label),
             datasets: [
-              { label: "Ganancia", data: gananciaPorSemana, backgroundColor: "#2E7D4F" },
-              { label: "Pérdidas", data: perdidaPorSemana, backgroundColor: "#C1442D" },
+              { label: "Ganancia", data: gananciaPorSemana, borderColor: "#2E7D4F", backgroundColor: "#2E7D4F22", tension: 0.3, fill: true },
+              { label: "Pérdidas", data: perdidaPorSemana, borderColor: "#C1442D", backgroundColor: "#C1442D22", tension: 0.3, fill: true },
             ],
           }} />
         </div>
@@ -973,16 +996,37 @@ function PaginaEstadisticas() {
 }
 
 function PantallaLogin({ onAutenticado }) {
-  const [modo, setModo] = useState("login"); // "login" | "registro"
+  const [modo, setModo] = useState("login"); // "login" | "registro" | "recuperar"
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmarPassword, setConfirmarPassword] = useState("");
+  const [verPassword, setVerPassword] = useState(false);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState(null);
   const [aviso, setAviso] = useState(null);
 
   const enviar = async () => {
     setError(null); setAviso(null);
+
+    if (modo === "recuperar") {
+      if (!email.trim()) { setError("Poné tu correo"); return; }
+      setCargando(true);
+      try {
+        await authApi.recuperar(email.trim());
+        setAviso("Te enviamos un correo con un link para elegir una nueva contraseña.");
+      } catch (e) {
+        setError(e.message);
+      } finally {
+        setCargando(false);
+      }
+      return;
+    }
+
     if (!email.trim() || !password) { setError("Poné correo y contraseña"); return; }
+    if (modo === "registro") {
+      if (password.length < 6) { setError("La contraseña debe tener al menos 6 caracteres"); return; }
+      if (password !== confirmarPassword) { setError("Las contraseñas no coinciden"); return; }
+    }
     setCargando(true);
     try {
       if (modo === "registro") {
@@ -1004,16 +1048,20 @@ function PantallaLogin({ onAutenticado }) {
     }
   };
 
+  const tituloModo = { login: "Iniciá sesión para ver tu negocio", registro: "Creá tu cuenta para empezar", recuperar: "Te ayudamos a recuperar tu acceso" };
+
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
       <div className="bg-white border border-slate-200 rounded-2xl p-6 w-full max-w-sm">
         <h1 className="text-xl font-bold text-slate-800 font-display mb-1">Mi Negocio</h1>
-        <p className="text-sm text-slate-500 mb-5">{modo === "login" ? "Iniciá sesión para ver tu negocio" : "Creá tu cuenta para empezar"}</p>
+        <p className="text-sm text-slate-500 mb-5">{tituloModo[modo]}</p>
 
-        <div className="flex gap-2 mb-4 bg-slate-100 rounded-lg p-1">
-          <button onClick={() => { setModo("login"); setError(null); setAviso(null); }} className={`flex-1 py-2 rounded-md text-sm font-medium ${modo === "login" ? "bg-white shadow text-slate-800" : "text-slate-500"}`}>Iniciar sesión</button>
-          <button onClick={() => { setModo("registro"); setError(null); setAviso(null); }} className={`flex-1 py-2 rounded-md text-sm font-medium ${modo === "registro" ? "bg-white shadow text-slate-800" : "text-slate-500"}`}>Crear cuenta</button>
-        </div>
+        {modo !== "recuperar" && (
+          <div className="flex gap-2 mb-4 bg-slate-100 rounded-lg p-1">
+            <button onClick={() => { setModo("login"); setError(null); setAviso(null); }} className={`flex-1 py-2 rounded-md text-sm font-medium ${modo === "login" ? "bg-white shadow text-slate-800" : "text-slate-500"}`}>Iniciar sesión</button>
+            <button onClick={() => { setModo("registro"); setError(null); setAviso(null); }} className={`flex-1 py-2 rounded-md text-sm font-medium ${modo === "registro" ? "bg-white shadow text-slate-800" : "text-slate-500"}`}>Crear cuenta</button>
+          </div>
+        )}
 
         {error && <div className="bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-lg p-2.5 mb-3">{error}</div>}
         {aviso && <div className="bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs rounded-lg p-2.5 mb-3">{aviso}</div>}
@@ -1022,13 +1070,43 @@ function PantallaLogin({ onAutenticado }) {
         <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="tu@correo.com"
           className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm mb-3 outline-none focus:border-[#E3A73B]" />
 
-        <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Contraseña</label>
-        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres"
-          className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm mb-4 outline-none focus:border-[#E3A73B]" />
+        {modo !== "recuperar" && (
+          <>
+            <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Contraseña</label>
+            <div className="relative mb-3">
+              <input type={verPassword ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres"
+                className="w-full px-3 py-2 pr-10 rounded-lg border border-slate-200 bg-white text-sm outline-none focus:border-[#E3A73B]" />
+              <button type="button" onClick={() => setVerPassword(!verPassword)} className="absolute right-2 top-1/2 -translate-y-1/2 text-sm">
+                {verPassword ? <IconEyeOff /> : <IconEye />}
+              </button>
+            </div>
+          </>
+        )}
 
-        <button disabled={cargando} onClick={enviar} className="w-full bg-[#E3A73B] text-[#1E3A32] font-semibold text-sm px-4 py-2.5 rounded-lg disabled:opacity-50 flex items-center justify-center gap-2">
-          {cargando && <IconLoading />} {modo === "login" ? "Entrar" : "Crear cuenta"}
+        {modo === "registro" && (
+          <>
+            <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Confirmar contraseña</label>
+            <input type={verPassword ? "text" : "password"} value={confirmarPassword} onChange={(e) => setConfirmarPassword(e.target.value)} placeholder="Repetí tu contraseña"
+              className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm mb-3 outline-none focus:border-[#E3A73B]" />
+          </>
+        )}
+
+        {modo === "login" && (
+          <button type="button" onClick={() => { setModo("recuperar"); setError(null); setAviso(null); }} className="block text-xs text-slate-500 underline mb-4">
+            ¿Olvidaste tu contraseña?
+          </button>
+        )}
+        {modo !== "login" && <div className="mb-1" />}
+
+        <button disabled={cargando} onClick={enviar} className="w-full bg-[#E3A73B] text-[#1E3A32] font-semibold text-sm px-4 py-2.5 rounded-lg disabled:opacity-50 flex items-center justify-center gap-2 mt-3">
+          {cargando && <IconLoading />} {modo === "login" ? "Entrar" : modo === "registro" ? "Crear cuenta" : "Enviar correo de recuperación"}
         </button>
+
+        {modo === "recuperar" && (
+          <button type="button" onClick={() => { setModo("login"); setError(null); setAviso(null); }} className="block text-xs text-slate-500 underline mt-3 mx-auto">
+            Volver a iniciar sesión
+          </button>
+        )}
       </div>
     </div>
   );
@@ -1059,7 +1137,7 @@ function App() {
 }
 
 function AppInterna({ sesion, onCerrarSesion }) {
-  const [pagina, setPagina] = useState("dashboard");
+  const [pagina, setPagina] = useState("inventario");
   const [modoOscuro, setModoOscuro] = useState(false);
   const [sidebarAbierto, setSidebarAbierto] = useState(false);
   const [nombreNegocio, setNombreNegocio] = useState("Mi Negocio");
@@ -1107,7 +1185,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
 
   return (
     <div className={modoOscuro ? "dark" : ""}>
-      <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex transition-colors">
+      <div className="min-h-screen bg-slate-50 dark:bg-black flex transition-colors">
         {sidebarAbierto && <div className="fixed inset-0 bg-black/40 z-20 lg:hidden" onClick={() => setSidebarAbierto(false)} />}
         <aside className={`fixed lg:static z-30 top-0 left-0 h-full w-64 bg-[#1E3A32] text-white flex flex-col transition-transform duration-200 ${sidebarAbierto ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}>
           <div className="p-5 border-b border-white/10 flex items-center justify-between">
@@ -1126,22 +1204,22 @@ function AppInterna({ sesion, onCerrarSesion }) {
               </button>
             ))}
           </nav>
-          <div className="p-4 border-t border-white/10 text-[11px] text-white/40 font-mono">v0.2 · Conectado a Supabase</div>
+          <div className="p-4 border-t border-white/10 text-[11px] text-white/40 font-mono">v1.0 · Con inicio de sesión</div>
         </aside>
         <div className="flex-1 flex flex-col min-w-0">
-          <header className="h-16 bg-white dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-700/60 flex items-center justify-between px-4 lg:px-6 sticky top-0 z-10">
+          <header className="h-16 bg-white dark:bg-black border-b border-slate-200 dark:border-white/10 flex items-center justify-between px-4 lg:px-6 sticky top-0 z-10">
             <div className="flex items-center gap-3">
-              <button className="lg:hidden text-slate-500 dark:text-slate-300 text-xl" onClick={() => setSidebarAbierto(true)}><IconMenu /></button>
-              <div className="hidden sm:flex items-center gap-2 text-sm text-slate-400 dark:text-slate-500">
-                <span className="font-medium text-slate-600 dark:text-slate-300">{NAV_ITEMS.find(n => n.id === pagina)?.label}</span>
+              <button className="lg:hidden text-slate-500 dark:text-white text-xl" onClick={() => setSidebarAbierto(true)}><IconMenu /></button>
+              <div className="hidden sm:flex items-center gap-2 text-sm text-slate-400 dark:text-white">
+                <span className="font-medium text-slate-600 dark:text-white">{NAV_ITEMS.find(n => n.id === pagina)?.label}</span>
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <button className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-500 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/60"><IconBell /></button>
-              <button onClick={() => setModoOscuro(!modoOscuro)} className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-500 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/60">
+              <button className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-500 dark:text-white hover:bg-slate-100 dark:hover:bg-slate-700/60"><IconBell /></button>
+              <button onClick={() => setModoOscuro(!modoOscuro)} className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-500 dark:text-white hover:bg-slate-100 dark:hover:bg-slate-700/60">
                 {modoOscuro ? <IconSun /> : <IconMoon />}
               </button>
-              <button onClick={onCerrarSesion} title="Cerrar sesión" className="text-xs font-medium px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 text-slate-500 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/60">
+              <button onClick={onCerrarSesion} title="Cerrar sesión" className="text-xs font-medium px-3 py-1.5 rounded-lg border border-slate-200 dark:border-white/20 text-slate-500 dark:text-white hover:bg-slate-100 dark:hover:bg-slate-700/60">
                 Cerrar sesión
               </button>
               <div className="w-9 h-9 rounded-full bg-[#E3A73B] text-[#1E3A32] flex items-center justify-center font-bold text-sm">
