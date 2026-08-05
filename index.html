@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="light">
 <title>Nova - Inventario y Ganancias</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%2316233D'/%3E%3Cpath d='M12 2.5 L13.9 9.7 L21 12 L13.9 14.3 L12 21.5 L10.1 14.3 L3 12 L10.1 9.7 Z' fill='%23E3A73B'/%3E%3Ccircle cx='12' cy='12' r='1.8' fill='%2316233D'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.tailwindcss.com"></script>
@@ -266,6 +267,29 @@ function StatCard({ label, value, icon: Icon, accent }) {
         </div>
       </div>
       <div className="text-2xl font-bold text-slate-800 dark:text-white font-mono">{value}</div>
+    </div>
+  );
+}
+
+function NovaMark({ size = 28, rounded = "rounded-lg" }) {
+  return (
+    <div className={`bg-[#16233D] ${rounded} flex items-center justify-center shrink-0 ring-1 ring-white/10`} style={{ width: size, height: size }}>
+      <svg viewBox="0 0 24 24" width={size * 0.6} height={size * 0.6} fill="none">
+        <path d="M12 1.5 L14.1 9.6 L22 12 L14.1 14.4 L12 22.5 L9.9 14.4 L2 12 L9.9 9.6 Z" fill="#E3A73B" />
+        <circle cx="12" cy="12" r="2" fill="#16233D" />
+      </svg>
+    </div>
+  );
+}
+
+function NovaBrand({ theme = "dark", size = "sm" }) {
+  const textCls = theme === "dark" ? "text-white/90" : "text-slate-800";
+  const markSize = size === "lg" ? 40 : size === "md" ? 30 : 24;
+  const textSize = size === "lg" ? "text-xl" : size === "md" ? "text-base" : "text-[13px]";
+  return (
+    <div className="flex items-center gap-2">
+      <NovaMark size={markSize} rounded={size === "lg" ? "rounded-xl" : "rounded-lg"} />
+      <span className={`font-bold tracking-tight font-display ${textCls} ${textSize}`}>nova</span>
     </div>
   );
 }
@@ -1085,9 +1109,8 @@ function PantallaLogin({ onAutenticado }) {
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
       <div className="bg-white border border-slate-200 rounded-2xl p-6 w-full max-w-sm">
-        <div className="flex items-center gap-2 mb-4">
-          <div className="w-7 h-7 rounded-md bg-[#16233D] flex items-center justify-center text-[#E3A73B] font-black text-sm">N</div>
-          <span className="font-extrabold tracking-[0.15em] text-slate-800 text-sm font-display">NOVA</span>
+        <div className="mb-4">
+          <NovaBrand theme="light" size="md" />
         </div>
         <p className="text-sm text-slate-500 mb-5">{tituloModo[modo]}</p>
 
@@ -1173,9 +1196,8 @@ function PantallaNuevaPassword({ accessToken, onListo }) {
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
       <div className="bg-white border border-slate-200 rounded-2xl p-6 w-full max-w-sm">
-        <div className="flex items-center gap-2 mb-4">
-          <div className="w-7 h-7 rounded-md bg-[#16233D] flex items-center justify-center text-[#E3A73B] font-black text-sm">N</div>
-          <span className="font-extrabold tracking-[0.15em] text-slate-800 text-sm font-display">NOVA</span>
+        <div className="mb-4">
+          <NovaBrand theme="light" size="md" />
         </div>
         {listo ? (
           <>
@@ -1336,9 +1358,8 @@ function AppInterna({ sesion, onCerrarSesion }) {
         <aside className={`fixed lg:static z-30 top-0 left-0 h-full w-64 bg-[#16233D] text-white flex flex-col transition-transform duration-200 ${sidebarAbierto ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}>
           <div className="relative p-5 border-b border-white/10">
             <button className="lg:hidden absolute top-4 right-4 text-white/50 hover:text-white" onClick={() => setSidebarAbierto(false)}><IconClose /></button>
-            <div className="flex items-center gap-2 mb-5">
-              <div className="w-6 h-6 rounded-md bg-[#E3A73B] flex items-center justify-center text-[#16233D] font-black text-[11px]">N</div>
-              <span className="font-extrabold tracking-[0.15em] text-white/90 text-xs font-display">NOVA</span>
+            <div className="mb-5">
+              <NovaBrand theme="dark" size="sm" />
             </div>
             <div className="flex items-center gap-3 min-w-0">
               <div className="w-11 h-11 rounded-xl overflow-hidden bg-white/10 ring-1 ring-white/10 flex items-center justify-center text-white font-bold text-base shrink-0">
