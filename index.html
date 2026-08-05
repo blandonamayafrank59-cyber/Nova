@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="light">
-<title>Mi Negocio - Inventario y Ganancias</title>
+<title>Nova - Inventario y Ganancias</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.tailwindcss.com"></script>
@@ -232,6 +232,7 @@ const IconClock     = (p) => <Ic {...p}>🕒</Ic>;
 const IconLoading   = (p) => <Ic {...p} className={(p.className||"")+" animate-spin inline-block"}>⏳</Ic>;
 const IconEye       = (p) => <Ic {...p}>👁️</Ic>;
 const IconEyeOff    = (p) => <Ic {...p}>🙈</Ic>;
+const IconGear      = (p) => <Ic {...p}>⚙️</Ic>;
 
 const NAV_ITEMS = [
   { id: "dashboard", label: "Panel general", icon: IconDashboard, listo: true },
@@ -242,6 +243,7 @@ const NAV_ITEMS = [
   { id: "estadisticas", label: "Estadísticas", icon: IconChart, listo: true },
   { id: "notas", label: "Notas", icon: IconNote, listo: false },
   { id: "usuarios", label: "Usuarios", icon: IconUsers, listo: false },
+  { id: "configuracion", label: "Configuración", icon: IconGear, listo: true },
 ];
 
 function Badge({ children, tone = "neutral" }) {
@@ -277,6 +279,36 @@ function ProximamenteCard({ titulo, descripcion, icon: Icon }) {
       <h3 className="font-semibold text-slate-800 dark:text-white">{titulo}</h3>
       <p className="text-sm text-slate-500 dark:text-white">{descripcion}</p>
       <Badge tone="warn">Próximamente</Badge>
+    </div>
+  );
+}
+
+function PaginaConfiguracion({ nombreNegocio, setNombreNegocio, logo, onLogoChange, onQuitarLogo, logoInputRef }) {
+  return (
+    <div className="max-w-xl">
+      <h1 className="text-xl font-bold text-slate-800 dark:text-white font-display mb-1">Configuración del negocio</h1>
+      <p className="text-sm text-slate-400 dark:text-white/60 mb-6">Personalizá el nombre y el logo que se muestran en tu panel.</p>
+
+      <div className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-white/10 rounded-2xl p-5 mb-4">
+        <label className="block text-xs font-semibold text-slate-500 dark:text-white/60 uppercase tracking-wide mb-2">Nombre del negocio</label>
+        <input value={nombreNegocio} onChange={(e) => setNombreNegocio(e.target.value)} placeholder="Ej. Bendición de Dios"
+          className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-black text-slate-800 dark:text-white text-sm outline-none focus:ring-2 focus:ring-[#E3A73B]" />
+        <p className="text-[11px] text-slate-400 dark:text-white/40 mt-2">Este nombre aparece en el menú y en los reportes.</p>
+      </div>
+
+      <div className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-white/10 rounded-2xl p-5">
+        <label className="block text-xs font-semibold text-slate-500 dark:text-white/60 uppercase tracking-wide mb-3">Logo del negocio</label>
+        <div className="flex items-center gap-4">
+          <div className="w-16 h-16 rounded-xl overflow-hidden bg-[#16233D] flex items-center justify-center text-white font-bold text-xl shrink-0">
+            {logo ? <img src={logo} alt="Logo del negocio" className="w-full h-full object-cover" /> : (nombreNegocio.trim().charAt(0).toUpperCase() || "?")}
+          </div>
+          <div className="flex flex-col gap-2">
+            <button onClick={() => logoInputRef.current && logoInputRef.current.click()} className="text-xs font-semibold px-3 py-2 rounded-lg bg-[#16233D] text-white hover:brightness-110 w-fit">Subir foto o logo</button>
+            {logo && <button onClick={onQuitarLogo} className="text-xs font-medium text-slate-400 dark:text-white/50 hover:text-red-500 text-left">Quitar logo</button>}
+          </div>
+        </div>
+        <p className="text-[11px] text-slate-400 dark:text-white/40 mt-3">Se guarda en este dispositivo. Recomendado: imagen cuadrada, menos de 1MB.</p>
+      </div>
     </div>
   );
 }
@@ -1053,7 +1085,10 @@ function PantallaLogin({ onAutenticado }) {
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
       <div className="bg-white border border-slate-200 rounded-2xl p-6 w-full max-w-sm">
-        <h1 className="text-xl font-bold text-slate-800 font-display mb-1">Mi Negocio</h1>
+        <div className="flex items-center gap-2 mb-4">
+          <div className="w-7 h-7 rounded-md bg-[#16233D] flex items-center justify-center text-[#E3A73B] font-black text-sm">N</div>
+          <span className="font-extrabold tracking-[0.15em] text-slate-800 text-sm font-display">NOVA</span>
+        </div>
         <p className="text-sm text-slate-500 mb-5">{tituloModo[modo]}</p>
 
         {modo !== "recuperar" && (
@@ -1138,7 +1173,10 @@ function PantallaNuevaPassword({ accessToken, onListo }) {
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
       <div className="bg-white border border-slate-200 rounded-2xl p-6 w-full max-w-sm">
-        <h1 className="text-xl font-bold text-slate-800 font-display mb-1">Mi Negocio</h1>
+        <div className="flex items-center gap-2 mb-4">
+          <div className="w-7 h-7 rounded-md bg-[#16233D] flex items-center justify-center text-[#E3A73B] font-black text-sm">N</div>
+          <span className="font-extrabold tracking-[0.15em] text-slate-800 text-sm font-display">NOVA</span>
+        </div>
         {listo ? (
           <>
             <p className="text-sm text-slate-500 mb-5">Tu contraseña se cambió correctamente.</p>
@@ -1218,8 +1256,8 @@ function AppInterna({ sesion, onCerrarSesion }) {
   }, [modoOscuro]);
   const [sidebarAbierto, setSidebarAbierto] = useState(false);
   const [nombreNegocio, setNombreNegocio] = useState(() => {
-    try { return localStorage.getItem("mi_negocio_nombre") || "Mi Negocio"; }
-    catch (e) { return "Mi Negocio"; }
+    try { return localStorage.getItem("mi_negocio_nombre") || ""; }
+    catch (e) { return ""; }
   });
   useEffect(() => {
     try { localStorage.setItem("mi_negocio_nombre", nombreNegocio); }
@@ -1288,6 +1326,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
     estadisticas: <PaginaEstadisticas />,
     notas: <ProximamenteCard titulo="Notas y recordatorios" descripcion="Un espacio para pedidos pendientes, ideas y tareas del negocio." icon={IconNote} />,
     usuarios: <ProximamenteCard titulo="Usuarios y permisos" descripcion="Administrá quién puede entrar y qué puede hacer cada empleado." icon={IconUsers} />,
+    configuracion: <PaginaConfiguracion nombreNegocio={nombreNegocio} setNombreNegocio={setNombreNegocio} logo={logo} onLogoChange={handleLogoChange} onQuitarLogo={quitarLogo} logoInputRef={logoInputRef} />,
   };
 
   return (
@@ -1295,32 +1334,33 @@ function AppInterna({ sesion, onCerrarSesion }) {
       <div className="min-h-screen bg-slate-50 dark:bg-black flex transition-colors">
         {sidebarAbierto && <div className="fixed inset-0 bg-black/40 z-20 lg:hidden" onClick={() => setSidebarAbierto(false)} />}
         <aside className={`fixed lg:static z-30 top-0 left-0 h-full w-64 bg-[#16233D] text-white flex flex-col transition-transform duration-200 ${sidebarAbierto ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}>
-          <div className="p-5 border-b border-white/10">
-            <div className="flex items-start justify-between">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="relative shrink-0 group">
-                  <button onClick={() => logoInputRef.current && logoInputRef.current.click()} className="w-12 h-12 rounded-xl overflow-hidden bg-[#E3A73B] flex items-center justify-center text-[#16233D] font-bold text-lg shrink-0">
-                    {logo ? <img src={logo} alt="Logo" className="w-full h-full object-cover" /> : (nombreNegocio.trim().charAt(0).toUpperCase() || "M")}
-                  </button>
-                  <button onClick={() => logoInputRef.current && logoInputRef.current.click()} title="Cambiar logo" className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-white text-[#16233D] flex items-center justify-center text-[10px] border-2 border-[#16233D]">✎</button>
-                  <input ref={logoInputRef} type="file" accept="image/*" onChange={handleLogoChange} className="hidden" />
-                </div>
-                <div className="min-w-0">
-                  <input value={nombreNegocio} onChange={(e) => setNombreNegocio(e.target.value)} className="bg-transparent font-bold text-lg outline-none border-b border-dashed border-white/20 w-full font-display" />
-                  <div className="text-[11px] text-white/50 font-mono mt-1">Panel de administración</div>
-                </div>
-              </div>
-              <button className="lg:hidden text-white/70" onClick={() => setSidebarAbierto(false)}><IconClose /></button>
+          <div className="relative p-5 border-b border-white/10">
+            <button className="lg:hidden absolute top-4 right-4 text-white/50 hover:text-white" onClick={() => setSidebarAbierto(false)}><IconClose /></button>
+            <div className="flex items-center gap-2 mb-5">
+              <div className="w-6 h-6 rounded-md bg-[#E3A73B] flex items-center justify-center text-[#16233D] font-black text-[11px]">N</div>
+              <span className="font-extrabold tracking-[0.15em] text-white/90 text-xs font-display">NOVA</span>
             </div>
-            {logo && <button onClick={quitarLogo} className="text-[10px] text-white/40 hover:text-white/70 mt-2">Quitar logo</button>}
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-11 h-11 rounded-xl overflow-hidden bg-white/10 ring-1 ring-white/10 flex items-center justify-center text-white font-bold text-base shrink-0">
+                {logo ? <img src={logo} alt="Logo del negocio" className="w-full h-full object-cover" /> : (nombreNegocio.trim().charAt(0).toUpperCase() || "?")}
+              </div>
+              <div className="min-w-0">
+                <div className="font-semibold text-[15px] text-white truncate">{nombreNegocio.trim() || "Tu negocio"}</div>
+                <div className="text-[11px] text-white/40 font-mono mt-0.5">Panel de administración</div>
+              </div>
+            </div>
+            <input ref={logoInputRef} type="file" accept="image/*" onChange={handleLogoChange} className="hidden" />
           </div>
           <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
             {NAV_ITEMS.map((item) => (
-              <button key={item.id} onClick={() => { setPagina(item.id); setSidebarAbierto(false); }}
-                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${pagina === item.id ? "bg-[#E3A73B] text-[#16233D]" : "text-white/80 hover:bg-white/10"}`}>
-                <span className="flex items-center gap-2.5"><item.icon /> {item.label}</span>
-                {!item.listo && <span className="text-[9px] uppercase font-bold bg-white/15 px-1.5 py-0.5 rounded">pronto</span>}
-              </button>
+              <React.Fragment key={item.id}>
+                {item.id === "configuracion" && <div className="h-px bg-white/10 my-2 mx-1" />}
+                <button onClick={() => { setPagina(item.id); setSidebarAbierto(false); }}
+                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${pagina === item.id ? "bg-[#E3A73B] text-[#16233D]" : "text-white/80 hover:bg-white/10"}`}>
+                  <span className="flex items-center gap-2.5"><item.icon /> {item.label}</span>
+                  {!item.listo && <span className="text-[9px] uppercase font-bold bg-white/15 px-1.5 py-0.5 rounded">pronto</span>}
+                </button>
+              </React.Fragment>
             ))}
           </nav>
           <div className="p-4 border-t border-white/10 text-[11px] text-white/40 font-mono">v1.0 · Con inicio de sesión</div>
