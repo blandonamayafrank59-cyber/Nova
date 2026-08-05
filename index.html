@@ -1217,7 +1217,37 @@ function AppInterna({ sesion, onCerrarSesion }) {
     catch (e) {}
   }, [modoOscuro]);
   const [sidebarAbierto, setSidebarAbierto] = useState(false);
-  const [nombreNegocio, setNombreNegocio] = useState("Mi Negocio");
+  const [nombreNegocio, setNombreNegocio] = useState(() => {
+    try { return localStorage.getItem("mi_negocio_nombre") || "Mi Negocio"; }
+    catch (e) { return "Mi Negocio"; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("mi_negocio_nombre", nombreNegocio); }
+    catch (e) {}
+  }, [nombreNegocio]);
+  const [logo, setLogo] = useState(() => {
+    try { return localStorage.getItem("mi_negocio_logo") || null; }
+    catch (e) { return null; }
+  });
+  const logoInputRef = React.useRef(null);
+  const handleLogoChange = (e) => {
+    const archivo = e.target.files && e.target.files[0];
+    if (!archivo) return;
+    if (archivo.size > 1024 * 1024) {
+      alert("La imagen es muy grande. Elegí una foto de menos de 1MB.");
+      return;
+    }
+    const lector = new FileReader();
+    lector.onload = () => {
+      setLogo(lector.result);
+      try { localStorage.setItem("mi_negocio_logo", lector.result); } catch (err) {}
+    };
+    lector.readAsDataURL(archivo);
+  };
+  const quitarLogo = () => {
+    setLogo(null);
+    try { localStorage.removeItem("mi_negocio_logo"); } catch (err) {}
+  };
   const [productos, setProductos] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(null);
@@ -1265,12 +1295,24 @@ function AppInterna({ sesion, onCerrarSesion }) {
       <div className="min-h-screen bg-slate-50 dark:bg-black flex transition-colors">
         {sidebarAbierto && <div className="fixed inset-0 bg-black/40 z-20 lg:hidden" onClick={() => setSidebarAbierto(false)} />}
         <aside className={`fixed lg:static z-30 top-0 left-0 h-full w-64 bg-[#16233D] text-white flex flex-col transition-transform duration-200 ${sidebarAbierto ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}>
-          <div className="p-5 border-b border-white/10 flex items-center justify-between">
-            <div>
-              <input value={nombreNegocio} onChange={(e) => setNombreNegocio(e.target.value)} className="bg-transparent font-bold text-lg outline-none border-b border-dashed border-white/20 w-full font-display" />
-              <div className="text-[11px] text-white/50 font-mono mt-1">Panel de administración</div>
+          <div className="p-5 border-b border-white/10">
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="relative shrink-0 group">
+                  <button onClick={() => logoInputRef.current && logoInputRef.current.click()} className="w-12 h-12 rounded-xl overflow-hidden bg-[#E3A73B] flex items-center justify-center text-[#16233D] font-bold text-lg shrink-0">
+                    {logo ? <img src={logo} alt="Logo" className="w-full h-full object-cover" /> : (nombreNegocio.trim().charAt(0).toUpperCase() || "M")}
+                  </button>
+                  <button onClick={() => logoInputRef.current && logoInputRef.current.click()} title="Cambiar logo" className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-white text-[#16233D] flex items-center justify-center text-[10px] border-2 border-[#16233D]">✎</button>
+                  <input ref={logoInputRef} type="file" accept="image/*" onChange={handleLogoChange} className="hidden" />
+                </div>
+                <div className="min-w-0">
+                  <input value={nombreNegocio} onChange={(e) => setNombreNegocio(e.target.value)} className="bg-transparent font-bold text-lg outline-none border-b border-dashed border-white/20 w-full font-display" />
+                  <div className="text-[11px] text-white/50 font-mono mt-1">Panel de administración</div>
+                </div>
+              </div>
+              <button className="lg:hidden text-white/70" onClick={() => setSidebarAbierto(false)}><IconClose /></button>
             </div>
-            <button className="lg:hidden text-white/70" onClick={() => setSidebarAbierto(false)}><IconClose /></button>
+            {logo && <button onClick={quitarLogo} className="text-[10px] text-white/40 hover:text-white/70 mt-2">Quitar logo</button>}
           </div>
           <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
             {NAV_ITEMS.map((item) => (
