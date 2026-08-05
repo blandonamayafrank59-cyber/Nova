@@ -294,6 +294,62 @@ function NovaBrand({ theme = "dark", size = "sm" }) {
   );
 }
 
+function PanelPerfil({ sesion, nombreNegocio, nombreUsuario, setNombreUsuario, fotoPerfil, onFotoChange, onQuitarFoto, fotoInputRef, modoOscuro, setModoOscuro, onIrConfiguracion, onCerrarSesion }) {
+  const [abierto, setAbierto] = useState(false);
+  const email = sesion?.user?.email || "";
+  const inicial = (nombreUsuario || email || "?").trim().charAt(0).toUpperCase() || "?";
+
+  return (
+    <div className="relative">
+      <button onClick={() => setAbierto(!abierto)} className="w-9 h-9 rounded-full overflow-hidden bg-[#E3A73B] text-[#16233D] flex items-center justify-center font-bold text-sm ring-2 ring-transparent hover:ring-[#E3A73B]/40 transition shrink-0">
+        {fotoPerfil ? <img src={fotoPerfil} alt="Tu foto de perfil" className="w-full h-full object-cover" /> : inicial}
+      </button>
+
+      {abierto && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setAbierto(false)} />
+          <div className="absolute right-0 top-11 z-40 w-64 bg-white dark:bg-neutral-900 border border-slate-200 dark:border-white/10 rounded-xl shadow-xl overflow-hidden">
+            <div className="p-4 flex items-center gap-3 border-b border-slate-100 dark:border-white/10">
+              <div className="relative shrink-0">
+                <button onClick={() => fotoInputRef.current && fotoInputRef.current.click()} title="Cambiar foto" className="w-12 h-12 rounded-full overflow-hidden bg-[#E3A73B] text-[#16233D] flex items-center justify-center font-bold text-base">
+                  {fotoPerfil ? <img src={fotoPerfil} alt="Tu foto" className="w-full h-full object-cover" /> : inicial}
+                </button>
+                <span className="pointer-events-none absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-[#16233D] text-white flex items-center justify-center text-[8px] border-2 border-white dark:border-neutral-900">✎</span>
+              </div>
+              <div className="min-w-0 flex-1">
+                <input value={nombreUsuario} onChange={(e) => setNombreUsuario(e.target.value)} placeholder="Tu nombre"
+                  className="w-full bg-transparent font-semibold text-sm text-slate-800 dark:text-white outline-none border-b border-transparent focus:border-slate-300 dark:focus:border-white/20 truncate" />
+                <div className="text-[11px] text-slate-400 dark:text-white/40 truncate">{email}</div>
+                {fotoPerfil && <button onClick={onQuitarFoto} className="text-[10px] text-slate-400 dark:text-white/40 hover:text-red-500 mt-0.5">Quitar foto</button>}
+              </div>
+            </div>
+
+            <div className="px-4 py-2.5 text-[11px] text-slate-400 dark:text-white/40 border-b border-slate-100 dark:border-white/10">
+              Negocio: <span className="text-slate-600 dark:text-white/70 font-medium">{nombreNegocio.trim() || "Sin nombre"}</span>
+            </div>
+
+            <button onClick={() => { onIrConfiguracion(); setAbierto(false); }} className="w-full text-left px-4 py-2.5 text-sm text-slate-600 dark:text-white/80 hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5">
+              <IconGear /> Configuración del negocio
+            </button>
+
+            <button onClick={() => setModoOscuro(!modoOscuro)} className="w-full text-left px-4 py-2.5 text-sm text-slate-600 dark:text-white/80 hover:bg-slate-50 dark:hover:bg-white/5 flex items-center justify-between gap-2.5">
+              <span className="flex items-center gap-2.5">{modoOscuro ? <IconMoon /> : <IconSun />} Apariencia</span>
+              <span className="text-[11px] text-slate-400 dark:text-white/40">{modoOscuro ? "Oscuro" : "Claro"}</span>
+            </button>
+
+            <div className="border-t border-slate-100 dark:border-white/10">
+              <button onClick={onCerrarSesion} className="w-full text-left px-4 py-2.5 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10">
+                Cerrar sesión
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+      <input ref={fotoInputRef} type="file" accept="image/*" onChange={onFotoChange} className="hidden" />
+    </div>
+  );
+}
+
 function ProximamenteCard({ titulo, descripcion, icon: Icon }) {
   return (
     <div className="bg-white dark:bg-black border border-dashed border-slate-300 dark:border-white/10 rounded-2xl p-8 flex flex-col items-center text-center gap-3 max-w-md mx-auto mt-10">
@@ -1308,6 +1364,41 @@ function AppInterna({ sesion, onCerrarSesion }) {
     setLogo(null);
     try { localStorage.removeItem("mi_negocio_logo"); } catch (err) {}
   };
+  const [nombreUsuario, setNombreUsuario] = useState(() => {
+    try {
+      const guardado = localStorage.getItem("mi_negocio_nombre_usuario");
+      if (guardado) return guardado;
+    } catch (e) {}
+    const email = sesion?.user?.email || "";
+    return email ? email.split("@")[0] : "";
+  });
+  useEffect(() => {
+    try { localStorage.setItem("mi_negocio_nombre_usuario", nombreUsuario); }
+    catch (e) {}
+  }, [nombreUsuario]);
+  const [fotoPerfil, setFotoPerfil] = useState(() => {
+    try { return localStorage.getItem("mi_negocio_foto_perfil") || null; }
+    catch (e) { return null; }
+  });
+  const fotoInputRef = React.useRef(null);
+  const handleFotoPerfilChange = (e) => {
+    const archivo = e.target.files && e.target.files[0];
+    if (!archivo) return;
+    if (archivo.size > 1024 * 1024) {
+      alert("La imagen es muy grande. Elegí una foto de menos de 1MB.");
+      return;
+    }
+    const lector = new FileReader();
+    lector.onload = () => {
+      setFotoPerfil(lector.result);
+      try { localStorage.setItem("mi_negocio_foto_perfil", lector.result); } catch (err) {}
+    };
+    lector.readAsDataURL(archivo);
+  };
+  const quitarFotoPerfil = () => {
+    setFotoPerfil(null);
+    try { localStorage.removeItem("mi_negocio_foto_perfil"); } catch (err) {}
+  };
   const [productos, setProductos] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(null);
@@ -1396,15 +1487,20 @@ function AppInterna({ sesion, onCerrarSesion }) {
             </div>
             <div className="flex items-center gap-2">
               <button className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-500 dark:text-white hover:bg-slate-100 dark:hover:bg-slate-700/60"><IconBell /></button>
-              <button onClick={() => setModoOscuro(!modoOscuro)} className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-500 dark:text-white hover:bg-slate-100 dark:hover:bg-slate-700/60">
-                {modoOscuro ? <IconSun /> : <IconMoon />}
-              </button>
-              <button onClick={onCerrarSesion} title="Cerrar sesión" className="text-xs font-medium px-3 py-1.5 rounded-lg border border-slate-200 dark:border-white/20 text-slate-500 dark:text-white hover:bg-slate-100 dark:hover:bg-slate-700/60">
-                Cerrar sesión
-              </button>
-              <div className="w-9 h-9 rounded-full bg-[#E3A73B] text-[#16233D] flex items-center justify-center font-bold text-sm">
-                {(sesion?.user?.email || "?").charAt(0).toUpperCase()}
-              </div>
+              <PanelPerfil
+                sesion={sesion}
+                nombreNegocio={nombreNegocio}
+                nombreUsuario={nombreUsuario}
+                setNombreUsuario={setNombreUsuario}
+                fotoPerfil={fotoPerfil}
+                onFotoChange={handleFotoPerfilChange}
+                onQuitarFoto={quitarFotoPerfil}
+                fotoInputRef={fotoInputRef}
+                modoOscuro={modoOscuro}
+                setModoOscuro={setModoOscuro}
+                onIrConfiguracion={() => setPagina("configuracion")}
+                onCerrarSesion={onCerrarSesion}
+              />
             </div>
           </header>
           <main className="flex-1 p-4 lg:p-6">{paginas[pagina]}</main>
