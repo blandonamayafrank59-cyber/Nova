@@ -208,6 +208,59 @@ const supaApi = {
     if (!res.ok) throw new Error("No se pudieron cargar los movimientos de caja");
     return res.json();
   },
+
+  // --- Cuentas por cobrar (fiados) ---
+  async listarClientes() {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/clientes?select=*&order=nombre.asc`, { headers: getHeaders() });
+    if (!res.ok) throw new Error("No se pudieron cargar los clientes");
+    return res.json();
+  },
+  async crearCliente(cliente) {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/clientes`, {
+      method: "POST",
+      headers: getHeaders({ Prefer: "return=representation" }),
+      body: JSON.stringify(cliente),
+    });
+    if (!res.ok) throw new Error("No se pudo crear el cliente");
+    return res.json();
+  },
+  async actualizarCliente(id, cambios) {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/clientes?id=eq.${id}`, {
+      method: "PATCH",
+      headers: getHeaders({ Prefer: "return=representation" }),
+      body: JSON.stringify(cambios),
+    });
+    if (!res.ok) throw new Error("No se pudo actualizar el cliente");
+    return res.json();
+  },
+  async crearFiado(fiado) {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/fiados`, {
+      method: "POST",
+      headers: getHeaders({ Prefer: "return=representation" }),
+      body: JSON.stringify(fiado),
+    });
+    if (!res.ok) throw new Error("No se pudo registrar el fiado");
+    return res.json();
+  },
+  async listarFiadosCliente(clienteId) {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/fiados?cliente_id=eq.${clienteId}&select=*&order=creado_en.desc`, { headers: getHeaders() });
+    if (!res.ok) throw new Error("No se pudo cargar el historial de compras");
+    return res.json();
+  },
+  async listarPagosFiado(limite = 500) {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/pagos_fiado?select=*&order=creado_en.desc&limit=${limite}`, { headers: getHeaders() });
+    if (!res.ok) throw new Error("No se pudieron cargar los pagos");
+    return res.json();
+  },
+  async crearPagoFiado(pago) {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/pagos_fiado`, {
+      method: "POST",
+      headers: getHeaders({ Prefer: "return=representation" }),
+      body: JSON.stringify(pago),
+    });
+    if (!res.ok) throw new Error("No se pudo registrar el pago");
+    return res.json();
+  },
 };
 
 // ============ ICONOS SIMPLES (sin librería externa) ============
@@ -234,6 +287,7 @@ const IconLoading   = (p) => <Ic {...p} className={(p.className||"")+" animate-s
 const IconEye       = (p) => <Ic {...p}>👁️</Ic>;
 const IconEyeOff    = (p) => <Ic {...p}>🙈</Ic>;
 const IconGear      = (p) => <Ic {...p}>⚙️</Ic>;
+const IconCard      = (p) => <Ic {...p}>💳</Ic>;
 
 const NAV_ITEMS = [
   { id: "dashboard", label: "Panel general", icon: IconDashboard, listo: true },
@@ -242,6 +296,7 @@ const NAV_ITEMS = [
   { id: "perdidas", label: "Pérdidas", icon: IconAlert, listo: true },
   { id: "historial", label: "Historial", icon: IconClock, listo: true },
   { id: "estadisticas", label: "Estadísticas", icon: IconChart, listo: true },
+  { id: "cuentas", label: "Cuentas por cobrar", icon: IconCard, listo: true },
   { id: "notas", label: "Notas", icon: IconNote, listo: false },
   { id: "usuarios", label: "Usuarios", icon: IconUsers, listo: false },
   { id: "configuracion", label: "Configuración", icon: IconGear, listo: true },
@@ -393,7 +448,347 @@ function PaginaConfiguracion({ nombreNegocio, setNombreNegocio, logo, onLogoChan
   );
 }
 
-function PaginaDashboard({ productos, stockBajo, valorStock, gananciaAcumulada, unidadesVendidas }) {
+function calcularEstadoCliente(cliente, ultimaActividad) {
+  const saldo = Number(cliente.saldo_pendiente) || 0;
+  if (saldo <= 0) return { label: "Al día", dot: "🟢", tono: "ok" };
+  const fechaRef = ultimaActividad || cliente.creado_en;
+  const dias = fechaRef ? (Date.now() - new Date(fechaRef).getTime()) / 86400000 : 999;
+  if (dias > 15) return { label: "Atrasado", dot: "🔴", tono: "danger" };
+  return { label: "Pendiente", dot: "🟡", tono: "warn" };
+}
+
+function TarjetaCliente({ cliente, totalPagado, ultimaActividad, onAbonar, onHistorial, onEditar }) {
+  const saldo = Number(cliente.saldo_pendiente) || 0;
+  const totalOriginal = saldo + totalPagado;
+  const progreso = totalOriginal > 0 ? Math.min(100, Math.round((totalPagado / totalOriginal) * 100)) : 100;
+  const estado = calcularEstadoCliente(cliente, ultimaActividad);
+
+  return (
+    <div className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-white/10 rounded-2xl p-4 flex flex-col gap-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="font-semibold text-slate-800 dark:text-white truncate">{cliente.nombre}</div>
+          {cliente.telefono && <div className="text-xs text-slate-400 dark:text-white/40">{cliente.telefono}</div>}
+        </div>
+        <span className="text-[11px] font-medium flex items-center gap-1 shrink-0 text-slate-500 dark:text-white/60">{estado.dot} {estado.label}</span>
+      </div>
+      <div>
+        <div className="text-[11px] text-slate-400 dark:text-white/40 uppercase tracking-wide">Saldo pendiente</div>
+        <div className="text-2xl font-bold font-mono text-slate-800 dark:text-white">C${saldo.toFixed(2)}</div>
+      </div>
+      <div>
+        <div className="w-full h-1.5 bg-slate-100 dark:bg-white/10 rounded-full overflow-hidden">
+          <div className="h-full bg-[#E3A73B] rounded-full transition-all" style={{ width: `${progreso}%` }} />
+        </div>
+        <div className="text-[10px] text-slate-400 dark:text-white/40 mt-1">{progreso}% pagado</div>
+      </div>
+      <div className="flex gap-2 mt-1">
+        <button onClick={onAbonar} className="flex-1 text-xs font-semibold bg-[#16233D] text-white rounded-lg py-2 hover:brightness-110">➕ Abono</button>
+        <button onClick={onHistorial} className="flex-1 text-xs font-semibold border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white/80 rounded-lg py-2 hover:bg-slate-50 dark:hover:bg-white/5">📋 Historial</button>
+        <button onClick={onEditar} title="Editar cliente" className="text-xs px-2.5 rounded-lg border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white/80 hover:bg-slate-50 dark:hover:bg-white/5">✏️</button>
+      </div>
+    </div>
+  );
+}
+
+function ModalCliente({ abierto, cliente, onGuardar, onCerrar, guardando }) {
+  const [form, setForm] = useState({ nombre: "", telefono: "" });
+  useEffect(() => {
+    if (cliente) setForm({ nombre: cliente.nombre || "", telefono: cliente.telefono || "" });
+    else setForm({ nombre: "", telefono: "" });
+  }, [cliente, abierto]);
+  if (!abierto) return null;
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-40">
+      <div className="bg-white dark:bg-black rounded-2xl p-6 w-full max-w-sm">
+        <h2 className="font-semibold text-slate-800 dark:text-white mb-4 font-display">{cliente ? "Editar cliente" : "Nuevo cliente"}</h2>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Nombre</label>
+            <input value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} placeholder="Ej. María López"
+              className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Teléfono (opcional)</label>
+            <input value={form.telefono} onChange={(e) => setForm({ ...form, telefono: e.target.value })} placeholder="Ej. 8888-8888"
+              className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
+          </div>
+        </div>
+        <div className="flex gap-2 justify-end mt-5">
+          <button onClick={onCerrar} className="px-4 py-2 rounded-lg text-sm font-medium border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white">Cancelar</button>
+          <button disabled={guardando || !form.nombre.trim()} onClick={() => onGuardar(form)} className="px-4 py-2 rounded-lg text-sm font-semibold bg-[#E3A73B] text-[#16233D] disabled:opacity-50 flex items-center gap-2">
+            {guardando && <IconLoading />} Guardar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ModalAbono({ abierto, cliente, onGuardar, onCerrar, guardando }) {
+  const [monto, setMonto] = useState("");
+  useEffect(() => { setMonto(""); }, [cliente, abierto]);
+  if (!abierto || !cliente) return null;
+  const saldo = Number(cliente.saldo_pendiente) || 0;
+  const montoNum = parseFloat(monto) || 0;
+  const nuevoSaldo = Math.max(0, saldo - montoNum);
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-40">
+      <div className="bg-white dark:bg-black rounded-2xl p-6 w-full max-w-sm">
+        <h2 className="font-semibold text-slate-800 dark:text-white mb-1 font-display">Registrar abono</h2>
+        <p className="text-sm text-slate-500 dark:text-white/60 mb-4">{cliente.nombre} · Saldo actual: C${saldo.toFixed(2)}</p>
+        <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Monto del pago</label>
+        <input type="number" value={monto} onChange={(e) => setMonto(e.target.value)} placeholder="0.00"
+          className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
+        {montoNum > 0 && (
+          <div className="bg-slate-50 dark:bg-neutral-900 rounded-lg p-3 text-xs text-slate-500 dark:text-white mt-3">
+            Saldo anterior: C${saldo.toFixed(2)} · Pago: -C${montoNum.toFixed(2)} · Nuevo saldo: <b className="text-emerald-600 dark:text-emerald-400">C${nuevoSaldo.toFixed(2)}</b>
+          </div>
+        )}
+        <div className="flex gap-2 justify-end mt-5">
+          <button onClick={onCerrar} className="px-4 py-2 rounded-lg text-sm font-medium border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white">Cancelar</button>
+          <button disabled={guardando || montoNum <= 0} onClick={() => onGuardar(montoNum)} className="px-4 py-2 rounded-lg text-sm font-semibold bg-[#E3A73B] text-[#16233D] disabled:opacity-50 flex items-center gap-2">
+            {guardando && <IconLoading />} Registrar pago
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ModalHistorialCliente({ abierto, cliente, pagos, onCerrar }) {
+  const [fiados, setFiados] = useState([]);
+  const [cargando, setCargando] = useState(false);
+  useEffect(() => {
+    if (!abierto || !cliente) return;
+    setCargando(true);
+    supaApi.listarFiadosCliente(cliente.id).then(setFiados).catch(() => setFiados([])).finally(() => setCargando(false));
+  }, [abierto, cliente]);
+  if (!abierto || !cliente) return null;
+  const pagosCliente = pagos.filter(p => p.cliente_id === cliente.id);
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-40">
+      <div className="bg-white dark:bg-black rounded-2xl p-6 w-full max-w-md max-h-[85vh] overflow-y-auto">
+        <h2 className="font-semibold text-slate-800 dark:text-white mb-1 font-display">{cliente.nombre}</h2>
+        <p className="text-sm text-slate-500 dark:text-white/60 mb-4">Saldo pendiente: C${Number(cliente.saldo_pendiente).toFixed(2)}</p>
+
+        <h3 className="text-xs font-semibold text-slate-500 dark:text-white/60 uppercase tracking-wide mb-2">Historial de compras (fiados)</h3>
+        {cargando && <p className="text-sm text-slate-400 py-2">Cargando...</p>}
+        <div className="space-y-2 mb-5">
+          {fiados.map(f => (
+            <div key={f.id} className="bg-slate-50 dark:bg-neutral-900 rounded-lg p-3">
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-mono font-semibold text-slate-700 dark:text-white">C${Number(f.total).toFixed(2)}</span>
+                <span className="text-xs text-slate-400 dark:text-white/40">{new Date(f.creado_en).toLocaleString()}</span>
+              </div>
+              <div className="text-xs text-slate-500 dark:text-white/60 mt-1">
+                {(f.productos || []).map(p => `${p.nombre} x${p.cantidad}`).join(", ")}
+              </div>
+            </div>
+          ))}
+          {!cargando && fiados.length === 0 && <p className="text-sm text-slate-400 py-2">Sin compras registradas.</p>}
+        </div>
+
+        <h3 className="text-xs font-semibold text-slate-500 dark:text-white/60 uppercase tracking-wide mb-2">Historial de pagos</h3>
+        <div className="space-y-2">
+          {pagosCliente.map(p => (
+            <div key={p.id} className="flex items-center justify-between bg-emerald-50 dark:bg-emerald-900/10 rounded-lg p-3 text-sm">
+              <span className="font-mono font-semibold text-emerald-700 dark:text-emerald-400">+C${Number(p.monto).toFixed(2)}</span>
+              <span className="text-xs text-slate-400 dark:text-white/40">{new Date(p.creado_en).toLocaleString()}</span>
+            </div>
+          ))}
+          {pagosCliente.length === 0 && <p className="text-sm text-slate-400 py-2">Sin pagos registrados.</p>}
+        </div>
+
+        <div className="flex justify-end mt-5">
+          <button onClick={onCerrar} className="px-4 py-2 rounded-lg text-sm font-medium border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white">Cerrar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ModalNuevoFiado({ abierto, clientes, productos, onGuardar, onCerrar, guardando }) {
+  const [clienteId, setClienteId] = useState("");
+  const [items, setItems] = useState([]);
+  const [productoSel, setProductoSel] = useState("");
+  const [cantidadSel, setCantidadSel] = useState("1");
+
+  useEffect(() => {
+    if (abierto) { setClienteId(""); setItems([]); setProductoSel(""); setCantidadSel("1"); }
+  }, [abierto]);
+
+  if (!abierto) return null;
+
+  const agregarItem = () => {
+    const producto = productos.find(p => p.id === productoSel);
+    const cant = parseFloat(cantidadSel) || 0;
+    if (!producto || cant <= 0) return;
+    const yaEnCarrito = items.reduce((a, it) => a + (it.producto_id === producto.id ? it.cantidad : 0), 0);
+    if (cant + yaEnCarrito > producto.cantidad) { alert(`Solo hay ${producto.cantidad} unidades de ${producto.nombre} en stock.`); return; }
+    setItems([...items, { producto_id: producto.id, nombre: producto.nombre, cantidad: cant, precio_unitario: producto.venta }]);
+    setProductoSel(""); setCantidadSel("1");
+  };
+
+  const quitarItem = (i) => setItems(items.filter((_, idx) => idx !== i));
+  const total = items.reduce((a, it) => a + it.cantidad * it.precio_unitario, 0);
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-40">
+      <div className="bg-white dark:bg-black rounded-2xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
+        <h2 className="font-semibold text-slate-800 dark:text-white mb-4 font-display">Registrar fiado</h2>
+
+        <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Cliente</label>
+        <select value={clienteId} onChange={(e) => setClienteId(e.target.value)}
+          className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B] mb-4">
+          <option value="">Seleccioná un cliente...</option>
+          {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+        </select>
+
+        <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Agregar producto</label>
+        <div className="flex gap-2 mb-3">
+          <select value={productoSel} onChange={(e) => setProductoSel(e.target.value)}
+            className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]">
+            <option value="">Producto...</option>
+            {productos.map(p => <option key={p.id} value={p.id}>{p.nombre} (stock: {p.cantidad})</option>)}
+          </select>
+          <input type="number" value={cantidadSel} onChange={(e) => setCantidadSel(e.target.value)} placeholder="Cant."
+            className="w-16 px-2 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
+          <button onClick={agregarItem} className="px-3 rounded-lg bg-[#16233D] text-white text-sm font-semibold">+</button>
+        </div>
+
+        <div className="space-y-1.5 mb-3">
+          {items.map((it, i) => (
+            <div key={i} className="flex items-center justify-between text-sm bg-slate-50 dark:bg-neutral-900 rounded-lg px-3 py-2">
+              <span className="text-slate-700 dark:text-white">{it.nombre} x{it.cantidad}</span>
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-slate-500 dark:text-white/60">C${(it.cantidad * it.precio_unitario).toFixed(2)}</span>
+                <button onClick={() => quitarItem(i)} className="text-rose-500 text-xs">✕</button>
+              </div>
+            </div>
+          ))}
+          {items.length === 0 && <p className="text-sm text-slate-400 py-1">Agregá al menos un producto.</p>}
+        </div>
+
+        <div className="bg-slate-50 dark:bg-neutral-900 rounded-lg p-3 text-sm text-slate-700 dark:text-white flex items-center justify-between mb-4">
+          <span>Total del fiado</span>
+          <span className="font-mono font-bold">C${total.toFixed(2)}</span>
+        </div>
+
+        <div className="flex gap-2 justify-end">
+          <button onClick={onCerrar} className="px-4 py-2 rounded-lg text-sm font-medium border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white">Cancelar</button>
+          <button disabled={guardando || !clienteId || items.length === 0} onClick={() => onGuardar({ cliente_id: clienteId, productos: items, total })}
+            className="px-4 py-2 rounded-lg text-sm font-semibold bg-[#E3A73B] text-[#16233D] disabled:opacity-50 flex items-center gap-2">
+            {guardando && <IconLoading />} Registrar fiado
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, error, onRecargar, onCrearCliente, onActualizarCliente, onCrearFiado, onRegistrarPago }) {
+  const [busqueda, setBusqueda] = useState("");
+  const [modalCliente, setModalCliente] = useState(false);
+  const [clienteEditando, setClienteEditando] = useState(null);
+  const [modalFiado, setModalFiado] = useState(false);
+  const [clienteAbono, setClienteAbono] = useState(null);
+  const [clienteHistorial, setClienteHistorial] = useState(null);
+  const [guardando, setGuardando] = useState(false);
+
+  const pagosPorCliente = {};
+  const ultimaPorCliente = {};
+  pagosFiado.forEach(p => {
+    pagosPorCliente[p.cliente_id] = (pagosPorCliente[p.cliente_id] || 0) + Number(p.monto);
+    if (!ultimaPorCliente[p.cliente_id] || new Date(p.creado_en) > new Date(ultimaPorCliente[p.cliente_id])) {
+      ultimaPorCliente[p.cliente_id] = p.creado_en;
+    }
+  });
+
+  const clientesFiltrados = clientes.filter(c => c.nombre.toLowerCase().includes(busqueda.toLowerCase()));
+  const totalPorCobrar = clientes.reduce((a, c) => a + (Number(c.saldo_pendiente) || 0), 0);
+  const clientesPendientes = clientes.filter(c => Number(c.saldo_pendiente) > 0).length;
+  const ahora = new Date();
+  const recuperadoMes = pagosFiado.filter(p => {
+    const f = new Date(p.creado_en);
+    return f.getFullYear() === ahora.getFullYear() && f.getMonth() === ahora.getMonth();
+  }).reduce((a, p) => a + Number(p.monto), 0);
+
+  const guardarCliente = async (form) => {
+    setGuardando(true);
+    try {
+      if (clienteEditando) await onActualizarCliente(clienteEditando.id, { nombre: form.nombre.trim(), telefono: form.telefono.trim() });
+      else await onCrearCliente({ nombre: form.nombre.trim(), telefono: form.telefono.trim(), saldo_pendiente: 0 });
+      setModalCliente(false); setClienteEditando(null);
+    } catch (e) { alert(e.message); }
+    finally { setGuardando(false); }
+  };
+
+  const guardarFiado = async (datos) => {
+    setGuardando(true);
+    try {
+      await onCrearFiado(datos);
+      setModalFiado(false);
+    } catch (e) { alert(e.message); }
+    finally { setGuardando(false); }
+  };
+
+  const guardarAbono = async (monto) => {
+    setGuardando(true);
+    try {
+      await onRegistrarPago(clienteAbono, monto);
+      setClienteAbono(null);
+    } catch (e) { alert(e.message); }
+    finally { setGuardando(false); }
+  };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
+        <div>
+          <h1 className="text-xl font-bold text-slate-800 dark:text-white font-display">Cuentas por cobrar</h1>
+          <p className="text-sm text-slate-500 dark:text-white/60 mt-1">Fiados, saldos y abonos de tus clientes.</p>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={() => { setClienteEditando(null); setModalCliente(true); }} className="text-xs font-semibold px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white/80 hover:bg-slate-50 dark:hover:bg-white/5">+ Cliente</button>
+          <button onClick={() => setModalFiado(true)} className="text-xs font-semibold px-3 py-2 rounded-lg bg-[#E3A73B] text-[#16233D] hover:brightness-105">+ Registrar fiado</button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-5">
+        <StatCard label="Total por cobrar" value={`C$${totalPorCobrar.toFixed(2)}`} icon={IconCard} accent="bg-[#16233D]" />
+        <StatCard label="Clientes pendientes" value={clientesPendientes} icon={IconUsers} accent="bg-amber-500" />
+        <StatCard label="Recuperado este mes" value={`C$${recuperadoMes.toFixed(2)}`} icon={IconWallet} accent="bg-emerald-600" />
+      </div>
+
+      {error && <div className="bg-rose-50 dark:bg-rose-900/10 border border-rose-200 dark:border-rose-900/30 text-rose-600 dark:text-rose-400 text-sm rounded-lg p-3 mb-4">{error}</div>}
+
+      <input value={busqueda} onChange={(e) => setBusqueda(e.target.value)} placeholder="Buscar cliente..."
+        className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B] mb-4" />
+
+      {cargando ? (
+        <p className="text-sm text-slate-400 py-6 text-center">Cargando clientes...</p>
+      ) : clientesFiltrados.length === 0 ? (
+        <p className="text-sm text-slate-400 py-6 text-center">{clientes.length === 0 ? "Todavía no tenés clientes registrados." : "No se encontraron clientes."}</p>
+      ) : (
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {clientesFiltrados.map(c => (
+            <TarjetaCliente key={c.id} cliente={c} totalPagado={pagosPorCliente[c.id] || 0} ultimaActividad={ultimaPorCliente[c.id]}
+              onAbonar={() => setClienteAbono(c)} onHistorial={() => setClienteHistorial(c)}
+              onEditar={() => { setClienteEditando(c); setModalCliente(true); }} />
+          ))}
+        </div>
+      )}
+
+      <ModalCliente abierto={modalCliente} cliente={clienteEditando} guardando={guardando} onGuardar={guardarCliente} onCerrar={() => { setModalCliente(false); setClienteEditando(null); }} />
+      <ModalNuevoFiado abierto={modalFiado} clientes={clientes} productos={productos} guardando={guardando} onGuardar={guardarFiado} onCerrar={() => setModalFiado(false)} />
+      <ModalAbono abierto={!!clienteAbono} cliente={clienteAbono} guardando={guardando} onGuardar={guardarAbono} onCerrar={() => setClienteAbono(null)} />
+      <ModalHistorialCliente abierto={!!clienteHistorial} cliente={clienteHistorial} pagos={pagosFiado} onCerrar={() => setClienteHistorial(null)} />
+    </div>
+  );
+}
+
+function PaginaDashboard({ productos, stockBajo, valorStock, gananciaAcumulada, unidadesVendidas, totalPorCobrar, clientesPendientes, recuperadoMes }) {
   return (
     <div className="space-y-6">
       <div>
@@ -405,6 +800,14 @@ function PaginaDashboard({ productos, stockBajo, valorStock, gananciaAcumulada, 
         <StatCard label="Unidades vendidas" value={unidadesVendidas} icon={IconCart} accent="bg-[#2471A3]" />
         <StatCard label="Ganancia acumulada" value={`C$${gananciaAcumulada.toFixed(2)}`} icon={IconChart} accent="bg-emerald-600" />
         <StatCard label="Productos en alerta" value={stockBajo} icon={IconAlert} accent="bg-rose-600" />
+      </div>
+      <div>
+        <h2 className="text-sm font-semibold text-slate-500 dark:text-white/60 uppercase tracking-wide mb-3">Cuentas por cobrar</h2>
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+          <StatCard label="Total por cobrar" value={`C$${totalPorCobrar.toFixed(2)}`} icon={IconCard} accent="bg-[#16233D]" />
+          <StatCard label="Clientes pendientes" value={clientesPendientes} icon={IconUsers} accent="bg-amber-500" />
+          <StatCard label="Recuperado este mes" value={`C$${recuperadoMes.toFixed(2)}`} icon={IconWallet} accent="bg-emerald-600" />
+        </div>
       </div>
       <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl p-5">
         <div className="flex items-center justify-between mb-4">
@@ -1425,18 +1828,82 @@ function AppInterna({ sesion, onCerrarSesion }) {
   const handleActualizar = async (id, cambios) => { await supaApi.actualizarProducto(id, cambios); await cargarProductos(); };
   const handleEliminar = async (id) => { await supaApi.eliminarProducto(id); await cargarProductos(); };
 
+  const [clientes, setClientes] = useState([]);
+  const [pagosFiado, setPagosFiado] = useState([]);
+  const [cargandoCuentas, setCargandoCuentas] = useState(true);
+  const [errorCuentas, setErrorCuentas] = useState(null);
+
+  const cargarCuentasPorCobrar = useCallback(async () => {
+    try {
+      setErrorCuentas(null);
+      const [clientesData, pagosData] = await Promise.all([supaApi.listarClientes(), supaApi.listarPagosFiado()]);
+      setClientes(clientesData);
+      setPagosFiado(pagosData);
+    } catch (e) {
+      setErrorCuentas("No se pudo conectar con la base de datos. Revisá tu conexión a internet.");
+    } finally {
+      setCargandoCuentas(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    cargarCuentasPorCobrar();
+    const intervalo = setInterval(cargarCuentasPorCobrar, 8000);
+    return () => clearInterval(intervalo);
+  }, [cargarCuentasPorCobrar]);
+
+  const handleCrearCliente = async (datos) => { await supaApi.crearCliente(datos); await cargarCuentasPorCobrar(); };
+  const handleActualizarCliente = async (id, cambios) => { await supaApi.actualizarCliente(id, cambios); await cargarCuentasPorCobrar(); };
+
+  const handleCrearFiado = async ({ cliente_id, productos: items, total }) => {
+    for (const item of items) {
+      const producto = productos.find(p => p.id === item.producto_id);
+      if (producto) {
+        const nuevaCantidad = Math.max(0, producto.cantidad - item.cantidad);
+        await supaApi.actualizarProducto(producto.id, { cantidad: nuevaCantidad });
+      }
+    }
+    await supaApi.crearFiado({ cliente_id, productos: items, total });
+    const cliente = clientes.find(c => c.id === cliente_id);
+    const nuevoSaldo = (Number(cliente?.saldo_pendiente) || 0) + total;
+    await supaApi.actualizarCliente(cliente_id, { saldo_pendiente: nuevoSaldo });
+    await Promise.all([cargarProductos(), cargarCuentasPorCobrar()]);
+  };
+
+  const handleRegistrarPago = async (cliente, monto) => {
+    await supaApi.crearPagoFiado({ cliente_id: cliente.id, monto });
+    const nuevoSaldo = Math.max(0, (Number(cliente.saldo_pendiente) || 0) - monto);
+    await supaApi.actualizarCliente(cliente.id, { saldo_pendiente: nuevoSaldo });
+    const sesionAbierta = await supaApi.obtenerSesionAbierta();
+    if (sesionAbierta) {
+      await supaApi.crearMovimiento({ sesion_id: sesionAbierta.id, tipo: "ingreso", descripcion: `Abono de fiado — ${cliente.nombre}`, monto });
+    } else {
+      alert("El pago se registró, pero no hay una caja abierta ahora mismo — abrí la caja para que este ingreso se sume ahí.");
+    }
+    await cargarCuentasPorCobrar();
+  };
+
   const stockBajo = productos.filter(p => p.cantidad <= p.minimo).length;
   const valorStock = productos.reduce((a, p) => a + p.cantidad * p.costo, 0);
   const gananciaAcumulada = productos.reduce((a, p) => a + (p.ganancia_acumulada || 0), 0);
   const unidadesVendidas = productos.reduce((a, p) => a + (p.vendidos || 0), 0);
 
+  const totalPorCobrar = clientes.reduce((a, c) => a + (Number(c.saldo_pendiente) || 0), 0);
+  const clientesPendientes = clientes.filter(c => Number(c.saldo_pendiente) > 0).length;
+  const ahoraDash = new Date();
+  const recuperadoMes = pagosFiado.filter(p => {
+    const f = new Date(p.creado_en);
+    return f.getFullYear() === ahoraDash.getFullYear() && f.getMonth() === ahoraDash.getMonth();
+  }).reduce((a, p) => a + Number(p.monto), 0);
+
   const paginas = {
-    dashboard: <PaginaDashboard productos={productos} stockBajo={stockBajo} valorStock={valorStock} gananciaAcumulada={gananciaAcumulada} unidadesVendidas={unidadesVendidas} />,
+    dashboard: <PaginaDashboard productos={productos} stockBajo={stockBajo} valorStock={valorStock} gananciaAcumulada={gananciaAcumulada} unidadesVendidas={unidadesVendidas} totalPorCobrar={totalPorCobrar} clientesPendientes={clientesPendientes} recuperadoMes={recuperadoMes} />,
     inventario: <PaginaInventario productos={productos} cargando={cargando} error={error} onRecargar={cargarProductos} onCrear={handleCrear} onActualizar={handleActualizar} onEliminar={handleEliminar} onVentaRegistrada={supaApi.registrarVenta} />,
     caja: <PaginaCaja />,
     perdidas: <PaginaPerdidas productos={productos} onActualizarProducto={handleActualizar} onRecargarProductos={cargarProductos} />,
     historial: <PaginaHistorial />,
     estadisticas: <PaginaEstadisticas />,
+    cuentas: <PaginaCuentasPorCobrar clientes={clientes} pagosFiado={pagosFiado} productos={productos} cargando={cargandoCuentas} error={errorCuentas} onRecargar={cargarCuentasPorCobrar} onCrearCliente={handleCrearCliente} onActualizarCliente={handleActualizarCliente} onCrearFiado={handleCrearFiado} onRegistrarPago={handleRegistrarPago} />,
     notas: <ProximamenteCard titulo="Notas y recordatorios" descripcion="Un espacio para pedidos pendientes, ideas y tareas del negocio." icon={IconNote} />,
     usuarios: <ProximamenteCard titulo="Usuarios y permisos" descripcion="Administrá quién puede entrar y qué puede hacer cada empleado." icon={IconUsers} />,
     configuracion: <PaginaConfiguracion nombreNegocio={nombreNegocio} setNombreNegocio={setNombreNegocio} logo={logo} onLogoChange={handleLogoChange} onQuitarLogo={quitarLogo} logoInputRef={logoInputRef} />,
