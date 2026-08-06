@@ -2101,18 +2101,8 @@ function AppInterna({ sesion, onCerrarSesion }) {
         <aside className={`fixed lg:static z-30 top-0 left-0 h-full w-64 bg-[#16233D] text-white flex flex-col transition-transform duration-200 ${sidebarAbierto ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}>
           <div className="relative p-5 border-b border-white/10">
             <button className="lg:hidden absolute top-4 right-4 text-white/50 hover:text-white" onClick={() => setSidebarAbierto(false)}><IconClose /></button>
-            <div className="mb-5">
-              <NovaBrand theme="dark" size="sm" />
-            </div>
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="w-11 h-11 rounded-xl overflow-hidden bg-white/10 ring-1 ring-white/10 flex items-center justify-center text-white font-bold text-base shrink-0">
-                {logo ? <img src={logo} alt="Logo del negocio" className="w-full h-full object-cover" /> : (nombreNegocio.trim().charAt(0).toUpperCase() || "?")}
-              </div>
-              <div className="min-w-0">
-                <div className="font-semibold text-[15px] text-white truncate">{nombreNegocio.trim() || "Tu negocio"}</div>
-                <div className="text-[11px] text-white/40 font-mono mt-0.5">Panel de administración</div>
-              </div>
-            </div>
+            <NovaBrand theme="dark" size="sm" />
+            <div className="text-[11px] text-white/40 font-mono mt-2">Panel de administración</div>
             <input ref={logoInputRef} type="file" accept="image/*" onChange={handleLogoChange} className="hidden" />
           </div>
           <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
@@ -2127,7 +2117,14 @@ function AppInterna({ sesion, onCerrarSesion }) {
               </React.Fragment>
             ))}
           </nav>
-          <div className="p-4 border-t border-white/10 text-[11px] text-white/40 font-mono">v1.0 · Con inicio de sesión</div>
+          <div className="border-t border-white/10 px-4 py-3 flex items-center gap-2.5">
+            <button onClick={() => logoInputRef.current && logoInputRef.current.click()} title="Cambiar logo del negocio" className="w-8 h-8 rounded-lg overflow-hidden bg-white/10 ring-1 ring-white/10 flex items-center justify-center text-white text-xs font-bold shrink-0">
+              {logo ? <img src={logo} alt="Logo del negocio" className="w-full h-full object-cover" /> : (nombreNegocio.trim().charAt(0).toUpperCase() || "?")}
+            </button>
+            <input value={nombreNegocio} onChange={(e) => setNombreNegocio(e.target.value)} placeholder="Nombre del negocio"
+              className="min-w-0 flex-1 bg-transparent text-sm font-medium text-white outline-none border-b border-dashed border-white/20 focus:border-white/40" />
+          </div>
+          <div className="px-4 pb-4 text-[11px] text-white/40 font-mono">v1.0 · Con inicio de sesión</div>
         </aside>
         <div className="flex-1 flex flex-col min-w-0">
           <header className="h-16 bg-white dark:bg-black border-b border-slate-200 dark:border-white/10 flex items-center justify-between px-4 lg:px-6 sticky top-0 z-10">
