@@ -212,7 +212,7 @@ const supaApi = {
   // --- Cuentas por cobrar (fiados) ---
   async listarClientes() {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/clientes?select=*&order=nombre.asc`, { headers: getHeaders() });
-    if (!res.ok) throw new Error("No se pudieron cargar los clientes");
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudieron cargar los clientes"); }
     return res.json();
   },
   async crearCliente(cliente) {
@@ -221,7 +221,7 @@ const supaApi = {
       headers: getHeaders({ Prefer: "return=representation" }),
       body: JSON.stringify(cliente),
     });
-    if (!res.ok) throw new Error("No se pudo crear el cliente");
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo crear el cliente"); }
     return res.json();
   },
   async actualizarCliente(id, cambios) {
@@ -230,7 +230,7 @@ const supaApi = {
       headers: getHeaders({ Prefer: "return=representation" }),
       body: JSON.stringify(cambios),
     });
-    if (!res.ok) throw new Error("No se pudo actualizar el cliente");
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo actualizar el cliente"); }
     return res.json();
   },
   async crearFiado(fiado) {
@@ -239,17 +239,17 @@ const supaApi = {
       headers: getHeaders({ Prefer: "return=representation" }),
       body: JSON.stringify(fiado),
     });
-    if (!res.ok) throw new Error("No se pudo registrar el fiado");
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo registrar el fiado"); }
     return res.json();
   },
   async listarFiadosCliente(clienteId) {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/fiados?cliente_id=eq.${clienteId}&select=*&order=creado_en.desc`, { headers: getHeaders() });
-    if (!res.ok) throw new Error("No se pudo cargar el historial de compras");
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo cargar el historial de compras"); }
     return res.json();
   },
   async listarPagosFiado(limite = 500) {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/pagos_fiado?select=*&order=creado_en.desc&limit=${limite}`, { headers: getHeaders() });
-    if (!res.ok) throw new Error("No se pudieron cargar los pagos");
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudieron cargar los pagos"); }
     return res.json();
   },
   async crearPagoFiado(pago) {
@@ -258,7 +258,7 @@ const supaApi = {
       headers: getHeaders({ Prefer: "return=representation" }),
       body: JSON.stringify(pago),
     });
-    if (!res.ok) throw new Error("No se pudo registrar el pago");
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo registrar el pago"); }
     return res.json();
   },
 };
