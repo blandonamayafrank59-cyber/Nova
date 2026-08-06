@@ -34,6 +34,7 @@ const SUPABASE_URL = "https://fgfobmrhgcztvjaagxvu.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZnZm9ibXJoZ2N6dHZqYWFneHZ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU2NTM5ODEsImV4cCI6MjEwMTIyOTk4MX0.IgG_8W9V1PazoNd6ji4_X9izEksfARM5pRpI6vcpkLw";
 
 let currentAccessToken = null;
+let currentRefreshToken = null;
 function getHeaders(extra = {}) {
   return {
     apikey: SUPABASE_ANON_KEY,
@@ -41,6 +42,52 @@ function getHeaders(extra = {}) {
     "Content-Type": "application/json",
     ...extra,
   };
+}
+
+// Callbacks que App() conecta para persistir/limpiar la sesión cuando se renueva o vence el token
+let alRefrescarSesion = null;
+let alExpirarSesion = null;
+let refrescandoPromesa = null;
+
+async function refrescarToken() {
+  if (!currentRefreshToken) return false;
+  if (refrescandoPromesa) return refrescandoPromesa;
+  refrescandoPromesa = (async () => {
+    try {
+      const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+        method: "POST",
+        headers: { apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: currentRefreshToken }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.access_token) return false;
+      currentAccessToken = data.access_token;
+      currentRefreshToken = data.refresh_token || currentRefreshToken;
+      if (alRefrescarSesion) alRefrescarSesion(data);
+      return true;
+    } catch (e) {
+      return false;
+    } finally {
+      refrescandoPromesa = null;
+    }
+  })();
+  return refrescandoPromesa;
+}
+
+// Envoltorio de fetch: si el token venció (401), renueva la sesión sola y reintenta una vez.
+async function peticionApi(url, opciones = {}) {
+  const { method = "GET", extraHeaders = {}, body } = opciones;
+  const intentar = () => fetch(url, { method, headers: getHeaders(extraHeaders), body });
+  let res = await intentar();
+  if (res.status === 401) {
+    const renovado = await refrescarToken();
+    if (renovado) {
+      res = await intentar();
+    } else if (alExpirarSesion) {
+      alExpirarSesion();
+    }
+  }
+  return res;
 }
 
 // --- Autenticación ---
@@ -98,168 +145,168 @@ const authApi = {
 
 const supaApi = {
   async listarProductos() {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/productos?select=*&order=creado_en.asc`, { headers: getHeaders() });
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/productos?select=*&order=creado_en.asc`);
     if (!res.ok) throw new Error("No se pudo cargar el inventario");
     return res.json();
   },
   async crearProducto(producto) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/productos`, {
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/productos`, {
       method: "POST",
-      headers: getHeaders({ Prefer: "return=representation" }),
+      extraHeaders: { Prefer: "return=representation" },
       body: JSON.stringify(producto),
     });
     if (!res.ok) throw new Error("No se pudo agregar el producto");
     return res.json();
   },
   async actualizarProducto(id, cambios) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/productos?id=eq.${id}`, {
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/productos?id=eq.${id}`, {
       method: "PATCH",
-      headers: getHeaders({ Prefer: "return=representation" }),
+      extraHeaders: { Prefer: "return=representation" },
       body: JSON.stringify(cambios),
     });
     if (!res.ok) throw new Error("No se pudo actualizar el producto");
     return res.json();
   },
   async eliminarProducto(id) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/productos?id=eq.${id}`, { method: "DELETE", headers: getHeaders() });
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/productos?id=eq.${id}`, { method: "DELETE" });
     if (!res.ok) throw new Error("No se pudo eliminar el producto");
   },
 
   // --- Caja ---
   async obtenerSesionAbierta() {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/caja_sesiones?estado=eq.abierta&select=*&order=fecha_apertura.desc&limit=1`, { headers: getHeaders() });
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/caja_sesiones?estado=eq.abierta&select=*&order=fecha_apertura.desc&limit=1`);
     if (!res.ok) throw new Error("No se pudo revisar la caja");
     const datos = await res.json();
     return datos[0] || null;
   },
   async abrirCaja(montoInicial) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/caja_sesiones`, {
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/caja_sesiones`, {
       method: "POST",
-      headers: getHeaders({ Prefer: "return=representation" }),
+      extraHeaders: { Prefer: "return=representation" },
       body: JSON.stringify({ monto_inicial: montoInicial, estado: "abierta" }),
     });
     if (!res.ok) throw new Error("No se pudo abrir la caja");
     return res.json();
   },
   async cerrarCaja(sesionId, montoFinal) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/caja_sesiones?id=eq.${sesionId}`, {
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/caja_sesiones?id=eq.${sesionId}`, {
       method: "PATCH",
-      headers: getHeaders({ Prefer: "return=representation" }),
+      extraHeaders: { Prefer: "return=representation" },
       body: JSON.stringify({ estado: "cerrada", monto_final: montoFinal, fecha_cierre: new Date().toISOString() }),
     });
     if (!res.ok) throw new Error("No se pudo cerrar la caja");
     return res.json();
   },
   async listarMovimientos(sesionId) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/caja_movimientos?sesion_id=eq.${sesionId}&select=*&order=creado_en.desc`, { headers: getHeaders() });
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/caja_movimientos?sesion_id=eq.${sesionId}&select=*&order=creado_en.desc`);
     if (!res.ok) throw new Error("No se pudieron cargar los movimientos");
     return res.json();
   },
   async crearMovimiento(movimiento) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/caja_movimientos`, {
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/caja_movimientos`, {
       method: "POST",
-      headers: getHeaders({ Prefer: "return=representation" }),
+      extraHeaders: { Prefer: "return=representation" },
       body: JSON.stringify(movimiento),
     });
     if (!res.ok) throw new Error("No se pudo registrar el movimiento");
     return res.json();
   },
   async listarSesionesCerradas() {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/caja_sesiones?estado=eq.cerrada&select=*&order=fecha_cierre.desc&limit=10`, { headers: getHeaders() });
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/caja_sesiones?estado=eq.cerrada&select=*&order=fecha_cierre.desc&limit=10`);
     if (!res.ok) throw new Error("No se pudo cargar el historial de caja");
     return res.json();
   },
 
   // --- Ventas (historial y estadísticas) ---
   async registrarVenta(venta) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/ventas`, {
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/ventas`, {
       method: "POST",
-      headers: getHeaders({ Prefer: "return=representation" }),
+      extraHeaders: { Prefer: "return=representation" },
       body: JSON.stringify(venta),
     });
     if (!res.ok) throw new Error("No se pudo registrar la venta");
     return res.json();
   },
   async listarVentas(limite = 200) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/ventas?select=*&order=creado_en.desc&limit=${limite}`, { headers: getHeaders() });
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/ventas?select=*&order=creado_en.desc&limit=${limite}`);
     if (!res.ok) throw new Error("No se pudieron cargar las ventas");
     return res.json();
   },
 
   // --- Pérdidas ---
   async registrarPerdida(perdida) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/perdidas`, {
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/perdidas`, {
       method: "POST",
-      headers: getHeaders({ Prefer: "return=representation" }),
+      extraHeaders: { Prefer: "return=representation" },
       body: JSON.stringify(perdida),
     });
     if (!res.ok) throw new Error("No se pudo registrar la pérdida");
     return res.json();
   },
   async listarPerdidas(limite = 200) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/perdidas?select=*&order=creado_en.desc&limit=${limite}`, { headers: getHeaders() });
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/perdidas?select=*&order=creado_en.desc&limit=${limite}`);
     if (!res.ok) throw new Error("No se pudieron cargar las pérdidas");
     return res.json();
   },
 
   // --- Todos los movimientos de caja (para historial, sin filtrar por sesión) ---
   async listarTodosMovimientosCaja(limite = 200) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/caja_movimientos?select=*&order=creado_en.desc&limit=${limite}`, { headers: getHeaders() });
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/caja_movimientos?select=*&order=creado_en.desc&limit=${limite}`);
     if (!res.ok) throw new Error("No se pudieron cargar los movimientos de caja");
     return res.json();
   },
 
   // --- Cuentas por cobrar (fiados) ---
   async listarClientes() {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/clientes?select=*&order=nombre.asc`, { headers: getHeaders() });
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/clientes?select=*&order=nombre.asc`);
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudieron cargar los clientes"); }
     return res.json();
   },
   async crearCliente(cliente) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/clientes`, {
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/clientes`, {
       method: "POST",
-      headers: getHeaders({ Prefer: "return=representation" }),
+      extraHeaders: { Prefer: "return=representation" },
       body: JSON.stringify(cliente),
     });
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo crear el cliente"); }
     return res.json();
   },
   async actualizarCliente(id, cambios) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/clientes?id=eq.${id}`, {
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/clientes?id=eq.${id}`, {
       method: "PATCH",
-      headers: getHeaders({ Prefer: "return=representation" }),
+      extraHeaders: { Prefer: "return=representation" },
       body: JSON.stringify(cambios),
     });
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo actualizar el cliente"); }
     return res.json();
   },
   async eliminarCliente(id) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/clientes?id=eq.${id}`, { method: "DELETE", headers: getHeaders() });
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/clientes?id=eq.${id}`, { method: "DELETE" });
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo eliminar el cliente"); }
   },
   async crearFiado(fiado) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/fiados`, {
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/fiados`, {
       method: "POST",
-      headers: getHeaders({ Prefer: "return=representation" }),
+      extraHeaders: { Prefer: "return=representation" },
       body: JSON.stringify(fiado),
     });
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo registrar el fiado"); }
     return res.json();
   },
   async listarFiadosCliente(clienteId) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/fiados?cliente_id=eq.${clienteId}&select=*&order=creado_en.desc`, { headers: getHeaders() });
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/fiados?cliente_id=eq.${clienteId}&select=*&order=creado_en.desc`);
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo cargar el historial de compras"); }
     return res.json();
   },
   async listarPagosFiado(limite = 500) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/pagos_fiado?select=*&order=creado_en.desc&limit=${limite}`, { headers: getHeaders() });
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/pagos_fiado?select=*&order=creado_en.desc&limit=${limite}`);
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudieron cargar los pagos"); }
     return res.json();
   },
   async crearPagoFiado(pago) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/pagos_fiado`, {
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/pagos_fiado`, {
       method: "POST",
-      headers: getHeaders({ Prefer: "return=representation" }),
+      extraHeaders: { Prefer: "return=representation" },
       body: JSON.stringify(pago),
     });
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo registrar el pago"); }
@@ -268,21 +315,21 @@ const supaApi = {
 
   // --- Consumo del hogar ---
   async listarConsumoHogar(limite = 500) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/consumo_hogar?select=*&order=creado_en.desc&limit=${limite}`, { headers: getHeaders() });
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/consumo_hogar?select=*&order=creado_en.desc&limit=${limite}`);
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo cargar el consumo del hogar"); }
     return res.json();
   },
   async crearConsumoHogar(registro) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/consumo_hogar`, {
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/consumo_hogar`, {
       method: "POST",
-      headers: getHeaders({ Prefer: "return=representation" }),
+      extraHeaders: { Prefer: "return=representation" },
       body: JSON.stringify(registro),
     });
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo registrar el consumo"); }
     return res.json();
   },
   async eliminarConsumoHogar(id) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/consumo_hogar?id=eq.${id}`, { method: "DELETE", headers: getHeaders() });
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/consumo_hogar?id=eq.${id}`, { method: "DELETE" });
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo eliminar el registro"); }
   },
 };
@@ -1884,6 +1931,7 @@ function App() {
     catch { return null; }
   });
   currentAccessToken = sesion?.access_token || null;
+  currentRefreshToken = sesion?.refresh_token || null;
 
   const guardarSesion = (data) => {
     localStorage.setItem("mi_negocio_sesion", JSON.stringify(data));
@@ -1894,6 +1942,24 @@ function App() {
     localStorage.removeItem("mi_negocio_sesion");
     setSesionState(null);
   };
+
+  useEffect(() => {
+    alRefrescarSesion = (data) => {
+      localStorage.setItem("mi_negocio_sesion", JSON.stringify(data));
+      setSesionState(data);
+    };
+    alExpirarSesion = () => {
+      localStorage.removeItem("mi_negocio_sesion");
+      setSesionState(null);
+    };
+    return () => { alRefrescarSesion = null; alExpirarSesion = null; };
+  }, []);
+
+  useEffect(() => {
+    if (!sesion) return;
+    const intervalo = setInterval(() => { refrescarToken(); }, 45 * 60 * 1000);
+    return () => clearInterval(intervalo);
+  }, [sesion]);
 
   if (tokenRecuperacion) {
     return <PantallaNuevaPassword accessToken={tokenRecuperacion} onListo={() => { window.location.hash = ""; window.location.reload(); }} />;
