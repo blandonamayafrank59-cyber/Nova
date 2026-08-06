@@ -1076,9 +1076,10 @@ function ModalMiembro({ abierto, onGuardar, onCerrar, guardando }) {
               className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Teléfono (opcional)</label>
+            <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Teléfono / WhatsApp (opcional)</label>
             <input value={form.telefono} onChange={(e) => setForm({ ...form, telefono: e.target.value })} placeholder="Ej. 8888-8888"
               className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
+            <p className="text-[11px] text-slate-400 dark:text-white/40 mt-1">Si lo ponés, te abrimos WhatsApp con el mensaje de invitación ya escrito.</p>
           </div>
           <div>
             <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Rol</label>
@@ -1124,12 +1125,14 @@ function PaginaUsuarios({ nombreNegocio }) {
   const invitar = async (form) => {
     setGuardando(true);
     try {
-      await supaApi.crearMiembro({
+      const creado = await supaApi.crearMiembro({
         nombre: form.nombre.trim(), correo: form.correo.trim().toLowerCase(), telefono: form.telefono.trim(),
         rol: form.rol, estado: "invitado", nombre_negocio: nombreNegocio.trim() || "el negocio",
       });
       setModalAbierto(false);
       await cargar();
+      const nuevo = creado && creado[0];
+      if (nuevo && nuevo.telefono) window.open(enlaceWhatsapp(nuevo), "_blank");
     } catch (e) { alert(e.message); }
     finally { setGuardando(false); }
   };
@@ -1143,6 +1146,19 @@ function PaginaUsuarios({ nombreNegocio }) {
     if (!confirm(`¿Quitar el acceso de ${miembro.nombre || miembro.correo}?`)) return;
     try { await supaApi.eliminarMiembro(miembro.id); await cargar(); }
     catch (e) { alert(e.message); }
+  };
+
+  const enlaceWhatsapp = (m) => {
+    const mensaje = `Hola ${m.nombre || ""}! 👋 Te invito a usar la app de nuestro negocio, Nova.
+
+1️⃣ Abrí este enlace: https://mi-negocio-khaki.vercel.app
+2️⃣ Tocá "Crear cuenta"
+3️⃣ Usá este correo: ${m.correo}
+4️⃣ Ponés la contraseña que vos quieras
+5️⃣ En cuanto entrés, te va a aparecer un mensaje de bienvenida — tocá el botón dorado y listo, ya vas a estar adentro`;
+    const telefonoLimpio = (m.telefono || "").replace(/\D/g, "");
+    const numero = telefonoLimpio ? (telefonoLimpio.length <= 8 ? `505${telefonoLimpio}` : telefonoLimpio) : "";
+    return `https://wa.me/${numero}?text=${encodeURIComponent(mensaje)}`;
   };
 
   return (
@@ -1180,6 +1196,10 @@ function PaginaUsuarios({ nombreNegocio }) {
                   className="text-xs px-2 py-1.5 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-slate-700 dark:text-white outline-none">
                   {Object.keys(ROL_LABEL).map(r => <option key={r} value={r}>{ROL_LABEL[r]}</option>)}
                 </select>
+                {m.estado !== "activo" && (
+                  <a href={enlaceWhatsapp(m)} target="_blank" rel="noopener noreferrer" title="Enviar invitación por WhatsApp"
+                    className="text-xs px-2.5 py-1.5 rounded-lg bg-emerald-500 text-white font-medium hover:brightness-105">📲 WhatsApp</a>
+                )}
                 <button onClick={() => quitarAcceso(m)} title="Quitar acceso" className="text-xs px-2.5 py-1.5 rounded-lg border border-rose-200 dark:border-rose-900/30 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/10">🗑️</button>
               </div>
             </div>
