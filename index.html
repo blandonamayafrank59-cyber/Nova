@@ -233,6 +233,10 @@ const supaApi = {
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo actualizar el cliente"); }
     return res.json();
   },
+  async eliminarCliente(id) {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/clientes?id=eq.${id}`, { method: "DELETE", headers: getHeaders() });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo eliminar el cliente"); }
+  },
   async crearFiado(fiado) {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/fiados`, {
       method: "POST",
@@ -276,6 +280,10 @@ const supaApi = {
     });
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo registrar el consumo"); }
     return res.json();
+  },
+  async eliminarConsumoHogar(id) {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/consumo_hogar?id=eq.${id}`, { method: "DELETE", headers: getHeaders() });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo eliminar el registro"); }
   },
 };
 
@@ -475,7 +483,7 @@ function calcularEstadoCliente(cliente, ultimaActividad) {
   return { label: "Pendiente", dot: "🟡", tono: "warn" };
 }
 
-function TarjetaCliente({ cliente, totalPagado, ultimaActividad, onAbonar, onHistorial, onEditar }) {
+function TarjetaCliente({ cliente, totalPagado, ultimaActividad, onAbonar, onHistorial, onEditar, onEliminar }) {
   const saldo = Number(cliente.saldo_pendiente) || 0;
   const totalOriginal = saldo + totalPagado;
   const progreso = totalOriginal > 0 ? Math.min(100, Math.round((totalPagado / totalOriginal) * 100)) : 100;
@@ -504,6 +512,7 @@ function TarjetaCliente({ cliente, totalPagado, ultimaActividad, onAbonar, onHis
         <button onClick={onAbonar} className="flex-1 text-xs font-semibold bg-[#16233D] text-white rounded-lg py-2 hover:brightness-110">➕ Abono</button>
         <button onClick={onHistorial} className="flex-1 text-xs font-semibold border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white/80 rounded-lg py-2 hover:bg-slate-50 dark:hover:bg-white/5">📋 Historial</button>
         <button onClick={onEditar} title="Editar cliente" className="text-xs px-2.5 rounded-lg border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white/80 hover:bg-slate-50 dark:hover:bg-white/5">✏️</button>
+        <button onClick={onEliminar} title="Eliminar cliente" className="text-xs px-2.5 rounded-lg border border-rose-200 dark:border-rose-900/30 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/10">🗑️</button>
       </div>
     </div>
   );
@@ -705,7 +714,7 @@ function ModalNuevoFiado({ abierto, clientes, productos, onGuardar, onCerrar, gu
   );
 }
 
-function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, error, onRecargar, onCrearCliente, onActualizarCliente, onCrearFiado, onRegistrarPago }) {
+function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, error, onRecargar, onCrearCliente, onActualizarCliente, onEliminarCliente, onCrearFiado, onRegistrarPago }) {
   const [busqueda, setBusqueda] = useState("");
   const [modalCliente, setModalCliente] = useState(false);
   const [clienteEditando, setClienteEditando] = useState(null);
@@ -713,6 +722,7 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
   const [clienteAbono, setClienteAbono] = useState(null);
   const [clienteHistorial, setClienteHistorial] = useState(null);
   const [guardando, setGuardando] = useState(false);
+  const [eliminandoId, setEliminandoId] = useState(null);
 
   const pagosPorCliente = {};
   const ultimaPorCliente = {};
@@ -760,6 +770,14 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
     finally { setGuardando(false); }
   };
 
+  const eliminarCliente = async (cliente) => {
+    if (!confirm(`¿Eliminar a ${cliente.nombre}? Esto borra su historial de fiados y pagos, y devuelve al inventario los productos de sus fiados pendientes. No se puede deshacer.`)) return;
+    setEliminandoId(cliente.id);
+    try { await onEliminarCliente(cliente); }
+    catch (e) { alert(e.message); }
+    finally { setEliminandoId(null); }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
@@ -793,7 +811,7 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
           {clientesFiltrados.map(c => (
             <TarjetaCliente key={c.id} cliente={c} totalPagado={pagosPorCliente[c.id] || 0} ultimaActividad={ultimaPorCliente[c.id]}
               onAbonar={() => setClienteAbono(c)} onHistorial={() => setClienteHistorial(c)}
-              onEditar={() => { setClienteEditando(c); setModalCliente(true); }} />
+              onEditar={() => { setClienteEditando(c); setModalCliente(true); }} onEliminar={() => eliminarCliente(c)} />
           ))}
         </div>
       )}
@@ -806,11 +824,12 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
   );
 }
 
-function PaginaConsumoHogar({ productos, registros, cargando, error, onRegistrar }) {
+function PaginaConsumoHogar({ productos, registros, cargando, error, onRegistrar, onEliminar }) {
   const [productoId, setProductoId] = useState("");
   const [cantidad, setCantidad] = useState("");
   const [nota, setNota] = useState("");
   const [guardando, setGuardando] = useState(false);
+  const [eliminandoId, setEliminandoId] = useState(null);
 
   const producto = productos.find(p => p.id === productoId);
   const cantidadNum = parseFloat(cantidad) || 0;
@@ -826,6 +845,14 @@ function PaginaConsumoHogar({ productos, registros, cargando, error, onRegistrar
       setProductoId(""); setCantidad(""); setNota("");
     } catch (e) { alert(e.message); }
     finally { setGuardando(false); }
+  };
+
+  const eliminarRegistro = async (registro) => {
+    if (!confirm(`¿Eliminar este consumo de ${registro.producto_nombre}? Se devuelve la cantidad al inventario. No se puede deshacer.`)) return;
+    setEliminandoId(registro.id);
+    try { await onEliminar(registro); }
+    catch (e) { alert(e.message); }
+    finally { setEliminandoId(null); }
   };
 
   const hoy = new Date();
@@ -898,7 +925,10 @@ function PaginaConsumoHogar({ productos, registros, cargando, error, onRegistrar
                   <div className="text-sm font-medium text-slate-700 dark:text-white">{r.producto_nombre} x{r.cantidad}</div>
                   <div className="text-xs text-slate-400 dark:text-white/40">{r.nota ? `${r.nota} · ` : ""}{new Date(r.creado_en).toLocaleString()}</div>
                 </div>
-                <div className="text-sm font-mono font-semibold text-rose-600 dark:text-rose-400">C${Number(r.costo_total).toFixed(2)}</div>
+                <div className="flex items-center gap-3">
+                  <div className="text-sm font-mono font-semibold text-rose-600 dark:text-rose-400">C${Number(r.costo_total).toFixed(2)}</div>
+                  <button onClick={() => eliminarRegistro(r)} disabled={eliminandoId === r.id} title="Eliminar" className="text-slate-400 hover:text-rose-500 disabled:opacity-40 text-sm">🗑️</button>
+                </div>
               </div>
             ))}
           </div>
@@ -2034,6 +2064,20 @@ function AppInterna({ sesion, onCerrarSesion }) {
     await cargarCuentasPorCobrar();
   };
 
+  const handleEliminarCliente = async (cliente) => {
+    const fiadosCliente = await supaApi.listarFiadosCliente(cliente.id);
+    for (const fiado of fiadosCliente) {
+      for (const item of (fiado.productos || [])) {
+        const producto = productos.find(p => p.id === item.producto_id);
+        if (producto) {
+          await supaApi.actualizarProducto(producto.id, { cantidad: producto.cantidad + item.cantidad });
+        }
+      }
+    }
+    await supaApi.eliminarCliente(cliente.id);
+    await Promise.all([cargarProductos(), cargarCuentasPorCobrar()]);
+  };
+
   const [consumoHogar, setConsumoHogar] = useState([]);
   const [cargandoConsumo, setCargandoConsumo] = useState(true);
   const [errorConsumo, setErrorConsumo] = useState(null);
@@ -2067,6 +2111,15 @@ function AppInterna({ sesion, onCerrarSesion }) {
     await Promise.all([cargarProductos(), cargarConsumoHogar()]);
   };
 
+  const handleEliminarConsumo = async (registro) => {
+    const producto = productos.find(p => p.id === registro.producto_id);
+    if (producto) {
+      await supaApi.actualizarProducto(producto.id, { cantidad: producto.cantidad + Number(registro.cantidad) });
+    }
+    await supaApi.eliminarConsumoHogar(registro.id);
+    await Promise.all([cargarProductos(), cargarConsumoHogar()]);
+  };
+
   const stockBajo = productos.filter(p => p.cantidad <= p.minimo).length;
   const valorStock = productos.reduce((a, p) => a + p.cantidad * p.costo, 0);
   const gananciaAcumulada = productos.reduce((a, p) => a + (p.ganancia_acumulada || 0), 0);
@@ -2087,8 +2140,8 @@ function AppInterna({ sesion, onCerrarSesion }) {
     perdidas: <PaginaPerdidas productos={productos} onActualizarProducto={handleActualizar} onRecargarProductos={cargarProductos} />,
     historial: <PaginaHistorial />,
     estadisticas: <PaginaEstadisticas consumoHogar={consumoHogar} />,
-    cuentas: <PaginaCuentasPorCobrar clientes={clientes} pagosFiado={pagosFiado} productos={productos} cargando={cargandoCuentas} error={errorCuentas} onRecargar={cargarCuentasPorCobrar} onCrearCliente={handleCrearCliente} onActualizarCliente={handleActualizarCliente} onCrearFiado={handleCrearFiado} onRegistrarPago={handleRegistrarPago} />,
-    consumo: <PaginaConsumoHogar productos={productos} registros={consumoHogar} cargando={cargandoConsumo} error={errorConsumo} onRegistrar={handleRegistrarConsumo} />,
+    cuentas: <PaginaCuentasPorCobrar clientes={clientes} pagosFiado={pagosFiado} productos={productos} cargando={cargandoCuentas} error={errorCuentas} onRecargar={cargarCuentasPorCobrar} onCrearCliente={handleCrearCliente} onActualizarCliente={handleActualizarCliente} onEliminarCliente={handleEliminarCliente} onCrearFiado={handleCrearFiado} onRegistrarPago={handleRegistrarPago} />,
+    consumo: <PaginaConsumoHogar productos={productos} registros={consumoHogar} cargando={cargandoConsumo} error={errorConsumo} onRegistrar={handleRegistrarConsumo} onEliminar={handleEliminarConsumo} />,
     notas: <ProximamenteCard titulo="Notas y recordatorios" descripcion="Un espacio para pedidos pendientes, ideas y tareas del negocio." icon={IconNote} />,
     usuarios: <ProximamenteCard titulo="Usuarios y permisos" descripcion="Administrá quién puede entrar y qué puede hacer cada empleado." icon={IconUsers} />,
     configuracion: <PaginaConfiguracion nombreNegocio={nombreNegocio} setNombreNegocio={setNombreNegocio} logo={logo} onLogoChange={handleLogoChange} onQuitarLogo={quitarLogo} logoInputRef={logoInputRef} />,
