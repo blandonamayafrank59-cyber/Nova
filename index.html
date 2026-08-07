@@ -456,9 +456,10 @@ function Badge({ children, tone = "neutral" }) {
   return <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${tones[tone]}`}>{children}</span>;
 }
 
-function StatCard({ label, value, icon: Icon, accent }) {
+function StatCard({ label, value, icon: Icon, accent, onClick }) {
+  const Envoltura = onClick ? "button" : "div";
   return (
-    <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl p-4 flex flex-col gap-3">
+    <Envoltura onClick={onClick} className={`bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl p-4 flex flex-col gap-3 w-full text-left ${onClick ? "cursor-pointer active:opacity-70 hover:border-[#E3A73B]/60 transition-colors" : ""}`}>
       <div className="flex items-center justify-between">
         <span className="text-xs font-medium text-slate-500 dark:text-white uppercase tracking-wide">{label}</span>
         <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${accent}`}>
@@ -466,7 +467,7 @@ function StatCard({ label, value, icon: Icon, accent }) {
         </div>
       </div>
       <div className="text-2xl font-bold text-slate-800 dark:text-white font-mono">{value}</div>
-    </div>
+    </Envoltura>
   );
 }
 
@@ -1219,7 +1220,7 @@ function PaginaUsuarios({ nombreNegocio }) {
   );
 }
 
-function PaginaDashboard({ productos, stockBajo, valorStock, gananciaAcumulada, unidadesVendidas, totalPorCobrar, clientesPendientes, recuperadoMes, verGanancias = true }) {
+function PaginaDashboard({ productos, stockBajo, valorStock, gananciaAcumulada, unidadesVendidas, totalPorCobrar, clientesPendientes, recuperadoMes, verGanancias = true, onIrA }) {
   return (
     <div className="space-y-6">
       <div>
@@ -1228,15 +1229,15 @@ function PaginaDashboard({ productos, stockBajo, valorStock, gananciaAcumulada, 
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="Valor en stock" value={`C$${valorStock.toFixed(2)}`} icon={IconPackage} accent="bg-[#16233D]" />
-        <StatCard label="Unidades vendidas" value={unidadesVendidas} icon={IconCart} accent="bg-[#2471A3]" />
+        <StatCard label="Unidades vendidas" value={unidadesVendidas} icon={IconCart} accent="bg-[#2471A3]" onClick={onIrA ? () => onIrA("historial") : undefined} />
         {verGanancias && <StatCard label="Ganancia acumulada" value={`C$${gananciaAcumulada.toFixed(2)}`} icon={IconChart} accent="bg-emerald-600" />}
-        <StatCard label="Productos en alerta" value={stockBajo} icon={IconAlert} accent="bg-rose-600" />
+        <StatCard label="Productos en alerta" value={stockBajo} icon={IconAlert} accent="bg-rose-600" onClick={onIrA ? () => onIrA("inventario") : undefined} />
       </div>
       <div>
         <h2 className="text-sm font-semibold text-slate-500 dark:text-white/60 uppercase tracking-wide mb-3">Cuentas por cobrar</h2>
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-          <StatCard label="Total por cobrar" value={`C$${totalPorCobrar.toFixed(2)}`} icon={IconCard} accent="bg-[#16233D]" />
-          <StatCard label="Clientes pendientes" value={clientesPendientes} icon={IconUsers} accent="bg-amber-500" />
+          <StatCard label="Total por cobrar" value={`C$${totalPorCobrar.toFixed(2)}`} icon={IconCard} accent="bg-[#16233D]" onClick={onIrA ? () => onIrA("cuentas") : undefined} />
+          <StatCard label="Clientes pendientes" value={clientesPendientes} icon={IconUsers} accent="bg-amber-500" onClick={onIrA ? () => onIrA("cuentas") : undefined} />
           <StatCard label="Recuperado este mes" value={`C$${recuperadoMes.toFixed(2)}`} icon={IconWallet} accent="bg-emerald-600" />
         </div>
       </div>
@@ -2439,7 +2440,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
     if (miMembresia !== undefined && !permisos[pagina]) {
       setPagina(permisos.dashboard ? "dashboard" : "inventario");
     }
-  }, [miMembresia]);
+  }, [miMembresia, pagina]);
   const [modoOscuro, setModoOscuro] = useState(() => {
     try { return localStorage.getItem("mi_negocio_modo_oscuro") === "1"; }
     catch (e) { return false; }
@@ -2666,7 +2667,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
   }).reduce((a, p) => a + Number(p.monto), 0);
 
   const paginas = {
-    dashboard: <PaginaDashboard productos={productos} stockBajo={stockBajo} valorStock={valorStock} gananciaAcumulada={gananciaAcumulada} unidadesVendidas={unidadesVendidas} totalPorCobrar={totalPorCobrar} clientesPendientes={clientesPendientes} recuperadoMes={recuperadoMes} verGanancias={permisos.ver_ganancias} />,
+    dashboard: <PaginaDashboard productos={productos} stockBajo={stockBajo} valorStock={valorStock} gananciaAcumulada={gananciaAcumulada} unidadesVendidas={unidadesVendidas} totalPorCobrar={totalPorCobrar} clientesPendientes={clientesPendientes} recuperadoMes={recuperadoMes} verGanancias={permisos.ver_ganancias} onIrA={setPagina} />,
     inventario: <PaginaInventario productos={productos} cargando={cargando} error={error} onRecargar={cargarProductos} onCrear={handleCrear} onActualizar={handleActualizar} onEliminar={handleEliminar} onVentaRegistrada={supaApi.registrarVenta} verCostos={permisos.ver_costos} puedeEditar={permisos.editar} />,
     caja: <PaginaCaja />,
     perdidas: <PaginaPerdidas productos={productos} onActualizarProducto={handleActualizar} onRecargarProductos={cargarProductos} />,
