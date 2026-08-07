@@ -759,12 +759,15 @@ function ModalNuevoFiado({ abierto, clientes, productos, onGuardar, onCerrar, gu
   const [items, setItems] = useState([]);
   const [productoSel, setProductoSel] = useState("");
   const [cantidadSel, setCantidadSel] = useState("1");
+  const [busquedaProducto, setBusquedaProducto] = useState("");
 
   useEffect(() => {
-    if (abierto) { setClienteId(""); setItems([]); setProductoSel(""); setCantidadSel("1"); }
+    if (abierto) { setClienteId(""); setItems([]); setProductoSel(""); setCantidadSel("1"); setBusquedaProducto(""); }
   }, [abierto]);
 
   if (!abierto) return null;
+
+  const productosFiltrados = productos.filter(p => p.nombre.toLowerCase().includes(busquedaProducto.toLowerCase()));
 
   const agregarItem = () => {
     const producto = productos.find(p => p.id === productoSel);
@@ -792,11 +795,13 @@ function ModalNuevoFiado({ abierto, clientes, productos, onGuardar, onCerrar, gu
         </select>
 
         <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Agregar producto</label>
+        <input value={busquedaProducto} onChange={(e) => setBusquedaProducto(e.target.value)} placeholder="Buscar producto..."
+          className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B] mb-2" />
         <div className="flex gap-2 mb-3">
           <select value={productoSel} onChange={(e) => setProductoSel(e.target.value)}
             className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]">
             <option value="">Producto...</option>
-            {productos.map(p => <option key={p.id} value={p.id}>{p.nombre} (stock: {p.cantidad})</option>)}
+            {productosFiltrados.map(p => <option key={p.id} value={p.id}>{p.nombre} (stock: {p.cantidad})</option>)}
           </select>
           <input type="number" value={cantidadSel} onChange={(e) => setCantidadSel(e.target.value)} placeholder="Cant."
             className="w-16 px-2 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
