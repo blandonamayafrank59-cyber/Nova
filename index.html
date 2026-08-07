@@ -1523,9 +1523,9 @@ function PaginaDashboard({ productos, stockBajo, valorStock, gananciaAcumulada, 
         <p className="text-sm text-slate-500 dark:text-white mt-1">Resumen de tu negocio en tiempo real, conectado a la base de datos.</p>
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="Valor en stock" value={`C$${valorStock.toFixed(2)}`} icon={IconPackage} accent="bg-[#16233D]" />
-        <StatCard label="Unidades vendidas" value={unidadesVendidas} icon={IconCart} accent="bg-[#2471A3]" onClick={onIrA ? () => onIrA("historial") : undefined} />
-        {verGanancias && <StatCard label="Ganancia acumulada" value={`C$${gananciaAcumulada.toFixed(2)}`} icon={IconChart} accent="bg-emerald-600" />}
+        <StatCard label="Valor en stock" value={`C$${valorStock.toFixed(2)}`} icon={IconPackage} accent="bg-[#16233D]" onClick={onIrA ? () => onIrA("inventario") : undefined} />
+        <StatCard label="Unidades vendidas" value={unidadesVendidas} icon={IconCart} accent="bg-[#2471A3]" onClick={onIrA ? () => onIrA("estadisticas") : undefined} />
+        {verGanancias && <StatCard label="Ganancia acumulada" value={`C$${gananciaAcumulada.toFixed(2)}`} icon={IconChart} accent="bg-emerald-600" onClick={onIrA ? () => onIrA("estadisticas") : undefined} />}
         <StatCard label="Productos en alerta" value={stockBajo} icon={IconAlert} accent="bg-rose-600" onClick={onIrA ? () => onIrA("inventario") : undefined} />
       </div>
       <div>
