@@ -395,7 +395,7 @@ const supaApi = {
     return datos[0] || null;
   },
 
-  // --- Producción por lotes (parte 1: solo registrar) ---
+  // --- Producción por lotes (registro progresivo) ---
   async listarLotes(limite = 100) {
     const res = await peticionApi(`${SUPABASE_URL}/rest/v1/lotes?select=*&order=creado_en.desc&limit=${limite}`);
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudieron cargar los lotes"); }
@@ -406,6 +406,13 @@ const supaApi = {
       method: "POST", extraHeaders: { Prefer: "return=representation" }, body: JSON.stringify(lote),
     });
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo guardar el lote"); }
+    return res.json();
+  },
+  async actualizarLote(id, cambios) {
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/lotes?id=eq.${id}`, {
+      method: "PATCH", extraHeaders: { Prefer: "return=representation" }, body: JSON.stringify(cambios),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo actualizar el lote"); }
     return res.json();
   },
   async eliminarLote(id) {
@@ -997,13 +1004,8 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
   );
 }
 
-function PaginaProduccion({ productos, lotes, cargando, error, onCrear, onEliminar }) {
-  const [nombreProducto, setNombreProducto] = useState("");
-  const [unidadesProducidas, setUnidadesProducidas] = useState("");
-  const [ingredientes, setIngredientes] = useState([]);
-  const [guardando, setGuardando] = useState(false);
-
-  const [modo, setModo] = useState("inventario"); // "inventario" | "nuevo"
+function TarjetaLoteActivo({ lote, productos, onAgregarIngrediente, onFinalizar, onEliminar }) {
+  const [modo, setModo] = useState("inventario");
   const [busquedaIng, setBusquedaIng] = useState("");
   const [listaAbierta, setListaAbierta] = useState(false);
   const [ingredienteInv, setIngredienteInv] = useState(null);
@@ -1011,6 +1013,10 @@ function PaginaProduccion({ productos, lotes, cargando, error, onCrear, onElimin
   const [nombreNuevoIng, setNombreNuevoIng] = useState("");
   const [cantidadNuevoIng, setCantidadNuevoIng] = useState("");
   const [unidadNuevoIng, setUnidadNuevoIng] = useState("unidad");
+  const [guardandoIng, setGuardandoIng] = useState(false);
+  const [finalizando, setFinalizando] = useState(false);
+  const [unidadesFinal, setUnidadesFinal] = useState("");
+  const [mostrarFinalizar, setMostrarFinalizar] = useState(false);
 
   const productosFiltrados = productos.filter(p => p.nombre.toLowerCase().includes(busquedaIng.toLowerCase()));
 
@@ -1020,43 +1026,144 @@ function PaginaProduccion({ productos, lotes, cargando, error, onCrear, onElimin
     setListaAbierta(false);
   };
 
-  const agregarIngredienteInventario = () => {
+  const agregarDelInventario = async () => {
     const cant = parseFloat(cantidadIng) || 0;
     if (!ingredienteInv || cant <= 0) { alert("Elegí un ingrediente del inventario y una cantidad."); return; }
-    setIngredientes([...ingredientes, {
-      tipo: "inventario", producto_id: ingredienteInv.id, nombre: ingredienteInv.nombre, cantidad: cant, unidad: "u.",
-    }]);
-    setIngredienteInv(null); setBusquedaIng(""); setCantidadIng("");
+    setGuardandoIng(true);
+    try {
+      await onAgregarIngrediente(lote, { tipo: "inventario", producto_id: ingredienteInv.id, nombre: ingredienteInv.nombre, cantidad: cant, unidad: "u." });
+      setIngredienteInv(null); setBusquedaIng(""); setCantidadIng("");
+    } catch (e) { alert(e.message); }
+    finally { setGuardandoIng(false); }
   };
 
-  const agregarIngredienteNuevo = () => {
+  const agregarNuevo = async () => {
     const cant = parseFloat(cantidadNuevoIng) || 0;
     if (!nombreNuevoIng.trim() || cant <= 0) { alert("Escribí el nombre del ingrediente y una cantidad."); return; }
-    setIngredientes([...ingredientes, {
-      tipo: "nuevo", producto_id: null, nombre: nombreNuevoIng.trim(), cantidad: cant, unidad: unidadNuevoIng,
-    }]);
-    setNombreNuevoIng(""); setCantidadNuevoIng(""); setUnidadNuevoIng("unidad");
-  };
-
-  const quitarIngrediente = (i) => setIngredientes(ingredientes.filter((_, idx) => idx !== i));
-
-  const limpiar = () => {
-    setNombreProducto(""); setUnidadesProducidas(""); setIngredientes([]);
-    setBusquedaIng(""); setIngredienteInv(null); setCantidadIng("");
-    setNombreNuevoIng(""); setCantidadNuevoIng(""); setUnidadNuevoIng("unidad");
-  };
-
-  const guardarLote = async () => {
-    const unidades = parseFloat(unidadesProducidas) || 0;
-    if (!nombreProducto.trim()) { alert("Escribí el nombre del producto que se produjo."); return; }
-    if (unidades <= 0) { alert("Indicá cuántas unidades se produjeron."); return; }
-    if (ingredientes.length === 0) { alert("Agregá al menos un ingrediente."); return; }
-    setGuardando(true);
+    setGuardandoIng(true);
     try {
-      await onCrear({ producto_nombre: nombreProducto.trim(), unidades_producidas: unidades, ingredientes });
-      limpiar();
+      await onAgregarIngrediente(lote, { tipo: "nuevo", producto_id: null, nombre: nombreNuevoIng.trim(), cantidad: cant, unidad: unidadNuevoIng });
+      setNombreNuevoIng(""); setCantidadNuevoIng(""); setUnidadNuevoIng("unidad");
     } catch (e) { alert(e.message); }
-    finally { setGuardando(false); }
+    finally { setGuardandoIng(false); }
+  };
+
+  const finalizar = async () => {
+    setFinalizando(true);
+    try {
+      await onFinalizar(lote, unidadesFinal ? parseFloat(unidadesFinal) : null);
+    } catch (e) { alert(e.message); }
+    finally { setFinalizando(false); }
+  };
+
+  const ingredientes = lote.ingredientes || [];
+
+  return (
+    <div className="bg-white dark:bg-neutral-900 border border-[#E3A73B]/40 rounded-2xl p-5">
+      <div className="flex items-center justify-between mb-1">
+        <div className="font-semibold text-slate-800 dark:text-white font-display">{lote.producto_nombre}</div>
+        <div className="flex items-center gap-2">
+          <Badge tone="warn">En proceso</Badge>
+          <button onClick={() => onEliminar(lote)} className="text-slate-400 hover:text-rose-500 text-sm">🗑️</button>
+        </div>
+      </div>
+      <div className="text-xs text-slate-400 dark:text-white/40 mb-4">Iniciado {new Date(lote.creado_en).toLocaleString()}</div>
+
+      <div className="space-y-1.5 mb-4">
+        {ingredientes.map((ing, i) => (
+          <div key={i} className="flex items-center justify-between text-sm bg-slate-50 dark:bg-black rounded-lg px-3 py-2">
+            <span className="text-slate-700 dark:text-white truncate">
+              {ing.nombre} — {ing.cantidad} {ing.unidad}
+              {ing.tipo === "nuevo" && <span className="text-[10px] text-amber-600 dark:text-amber-400 ml-1.5">(nuevo)</span>}
+            </span>
+          </div>
+        ))}
+        {ingredientes.length === 0 && <p className="text-sm text-slate-400 py-1">Todavía no agregaste ingredientes.</p>}
+      </div>
+
+      <div className="flex gap-2 mb-3">
+        <button onClick={() => setModo("inventario")} className={`flex-1 text-xs font-semibold py-2 rounded-lg ${modo === "inventario" ? "bg-[#16233D] text-white" : "border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white/70"}`}>Del inventario</button>
+        <button onClick={() => setModo("nuevo")} className={`flex-1 text-xs font-semibold py-2 rounded-lg ${modo === "nuevo" ? "bg-[#16233D] text-white" : "border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white/70"}`}>Ingrediente nuevo</button>
+      </div>
+
+      {modo === "inventario" ? (
+        <div className="mb-3">
+          <div className="relative mb-2">
+            <input
+              value={busquedaIng}
+              onChange={(e) => { setBusquedaIng(e.target.value); setIngredienteInv(null); setListaAbierta(true); }}
+              onFocus={() => setListaAbierta(true)}
+              placeholder="Buscar producto del inventario..."
+              className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
+            {listaAbierta && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setListaAbierta(false)} />
+                <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                  {productosFiltrados.length === 0 ? (
+                    <p className="text-xs text-slate-400 px-3 py-2.5">Sin resultados.</p>
+                  ) : productosFiltrados.map(p => (
+                    <button key={p.id} onClick={() => elegirIngredienteInv(p)}
+                      className="w-full text-left px-3 py-2.5 text-sm text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center justify-between gap-2">
+                      <span className="truncate">{p.nombre}</span>
+                      <span className="text-xs text-slate-400 shrink-0">stock: {p.cantidad}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <input type="number" value={cantidadIng} onChange={(e) => setCantidadIng(e.target.value)} placeholder="Cantidad usada"
+              className="flex-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
+            <button disabled={guardandoIng} onClick={agregarDelInventario} className="px-4 rounded-lg bg-[#16233D] text-white text-sm font-semibold disabled:opacity-50">+ Agregar</button>
+          </div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-2 mb-3">
+          <input value={nombreNuevoIng} onChange={(e) => setNombreNuevoIng(e.target.value)} placeholder="Nombre del ingrediente"
+            className="col-span-2 px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
+          <input type="number" value={cantidadNuevoIng} onChange={(e) => setCantidadNuevoIng(e.target.value)} placeholder="Cantidad"
+            className="px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
+          <select value={unidadNuevoIng} onChange={(e) => setUnidadNuevoIng(e.target.value)}
+            className="px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]">
+            {["unidad", "g", "kg", "ml", "l", "lb", "oz"].map(u => <option key={u} value={u}>{u}</option>)}
+          </select>
+          <button disabled={guardandoIng} onClick={agregarNuevo} className="col-span-2 px-4 py-2 rounded-lg bg-[#16233D] text-white text-sm font-semibold disabled:opacity-50">+ Agregar ingrediente nuevo</button>
+        </div>
+      )}
+
+      {mostrarFinalizar ? (
+        <div className="border-t border-slate-100 dark:border-white/10 pt-3 mt-3">
+          <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Unidades producidas (opcional)</label>
+          <div className="flex gap-2">
+            <input type="number" value={unidadesFinal} onChange={(e) => setUnidadesFinal(e.target.value)} placeholder="Si ya lo sabés"
+              className="flex-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
+            <button disabled={finalizando} onClick={finalizar} className="px-4 rounded-lg bg-[#E3A73B] text-[#16233D] text-sm font-semibold disabled:opacity-50 flex items-center gap-2">
+              {finalizando && <IconLoading />} Confirmar
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button onClick={() => setMostrarFinalizar(true)} className="w-full mt-1 border border-emerald-500 text-emerald-600 dark:text-emerald-400 font-semibold text-sm px-4 py-2.5 rounded-lg">
+          ✅ Finalizar lote
+        </button>
+      )}
+    </div>
+  );
+}
+
+function PaginaProduccion({ productos, lotes, cargando, error, onIniciar, onAgregarIngrediente, onFinalizar, onEliminar }) {
+  const [nombreNuevoLote, setNombreNuevoLote] = useState("");
+  const [iniciando, setIniciando] = useState(false);
+
+  const iniciarLote = async () => {
+    if (!nombreNuevoLote.trim()) { alert("Escribí qué producto vas a preparar."); return; }
+    setIniciando(true);
+    try {
+      await onIniciar(nombreNuevoLote.trim());
+      setNombreNuevoLote("");
+    } catch (e) { alert(e.message); }
+    finally { setIniciando(false); }
   };
 
   const eliminarLote = async (l) => {
@@ -1064,126 +1171,62 @@ function PaginaProduccion({ productos, lotes, cargando, error, onCrear, onElimin
     try { await onEliminar(l.id); } catch (e) { alert(e.message); }
   };
 
+  const enProceso = lotes.filter(l => l.estado === "en_proceso");
+  const finalizados = lotes.filter(l => l.estado !== "en_proceso");
+
   return (
     <div className="space-y-5">
       <div>
         <h1 className="text-xl font-bold text-slate-800 dark:text-white font-display">🏭 Producción por lotes</h1>
-        <p className="text-sm text-slate-500 dark:text-white/60 mt-1">Registrá qué produjiste y con qué. Por ahora solo se guarda — todavía no descuenta inventario ni calcula costos.</p>
+        <p className="text-sm text-slate-500 dark:text-white/60 mt-1">Iniciá un lote sin saber cuánto vas a producir, y agregá los ingredientes conforme los vas usando.</p>
       </div>
 
       {error && <div className="bg-rose-50 dark:bg-rose-900/10 border border-rose-200 dark:border-rose-900/30 text-rose-600 dark:text-rose-400 text-sm rounded-lg p-3">{error}</div>}
 
       <div className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-white/10 rounded-2xl p-5">
-        <h2 className="font-semibold text-slate-800 dark:text-white text-sm mb-4">Nuevo lote</h2>
-
-        <div className="grid sm:grid-cols-2 gap-3 mb-4">
-          <div>
-            <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Producto que se produjo</label>
-            <input value={nombreProducto} onChange={(e) => setNombreProducto(e.target.value)} placeholder="Ej. Pan dulce" list="productos-existentes"
-              className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
-            <datalist id="productos-existentes">
-              {productos.map(p => <option key={p.id} value={p.nombre} />)}
-            </datalist>
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Unidades producidas</label>
-            <input type="number" value={unidadesProducidas} onChange={(e) => setUnidadesProducidas(e.target.value)} placeholder="0"
-              className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
-          </div>
+        <h2 className="font-semibold text-slate-800 dark:text-white text-sm mb-3">Iniciar nuevo lote</h2>
+        <div className="flex gap-2">
+          <input value={nombreNuevoLote} onChange={(e) => setNombreNuevoLote(e.target.value)} placeholder="Ej. Tacos, Repochetas, Batidos..." list="productos-existentes-lote"
+            className="flex-1 px-3 py-2.5 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
+          <datalist id="productos-existentes-lote">
+            {productos.map(p => <option key={p.id} value={p.nombre} />)}
+          </datalist>
+          <button disabled={iniciando} onClick={iniciarLote} className="px-4 rounded-lg bg-[#E3A73B] text-[#16233D] text-sm font-semibold disabled:opacity-50 flex items-center gap-2">
+            {iniciando && <IconLoading />} Iniciar lote
+          </button>
         </div>
-
-        <div className="border-t border-slate-100 dark:border-white/10 pt-4">
-          <h3 className="text-xs font-semibold text-slate-500 dark:text-white uppercase tracking-wide mb-3">Ingredientes / productos utilizados</h3>
-
-          <div className="flex gap-2 mb-3">
-            <button onClick={() => setModo("inventario")} className={`flex-1 text-xs font-semibold py-2 rounded-lg ${modo === "inventario" ? "bg-[#16233D] text-white" : "border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white/70"}`}>Del inventario</button>
-            <button onClick={() => setModo("nuevo")} className={`flex-1 text-xs font-semibold py-2 rounded-lg ${modo === "nuevo" ? "bg-[#16233D] text-white" : "border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white/70"}`}>Ingrediente nuevo</button>
-          </div>
-
-          {modo === "inventario" ? (
-            <div className="mb-3">
-              <div className="relative mb-2">
-                <input
-                  value={busquedaIng}
-                  onChange={(e) => { setBusquedaIng(e.target.value); setIngredienteInv(null); setListaAbierta(true); }}
-                  onFocus={() => setListaAbierta(true)}
-                  placeholder="Buscar producto del inventario..."
-                  className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
-                {listaAbierta && (
-                  <>
-                    <div className="fixed inset-0 z-40" onClick={() => setListaAbierta(false)} />
-                    <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                      {productosFiltrados.length === 0 ? (
-                        <p className="text-xs text-slate-400 px-3 py-2.5">Sin resultados.</p>
-                      ) : productosFiltrados.map(p => (
-                        <button key={p.id} onClick={() => elegirIngredienteInv(p)}
-                          className="w-full text-left px-3 py-2.5 text-sm text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center justify-between gap-2">
-                          <span className="truncate">{p.nombre}</span>
-                          <span className="text-xs text-slate-400 shrink-0">stock: {p.cantidad}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </div>
-              <div className="flex gap-2">
-                <input type="number" value={cantidadIng} onChange={(e) => setCantidadIng(e.target.value)} placeholder="Cantidad usada"
-                  className="flex-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
-                <button onClick={agregarIngredienteInventario} className="px-4 rounded-lg bg-[#16233D] text-white text-sm font-semibold">+ Agregar</button>
-              </div>
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 gap-2 mb-3">
-              <input value={nombreNuevoIng} onChange={(e) => setNombreNuevoIng(e.target.value)} placeholder="Nombre del ingrediente"
-                className="col-span-2 px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
-              <input type="number" value={cantidadNuevoIng} onChange={(e) => setCantidadNuevoIng(e.target.value)} placeholder="Cantidad"
-                className="px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
-              <select value={unidadNuevoIng} onChange={(e) => setUnidadNuevoIng(e.target.value)}
-                className="px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]">
-                {["unidad", "g", "kg", "ml", "l", "lb", "oz"].map(u => <option key={u} value={u}>{u}</option>)}
-              </select>
-              <button onClick={agregarIngredienteNuevo} className="col-span-2 px-4 py-2 rounded-lg bg-[#16233D] text-white text-sm font-semibold">+ Agregar ingrediente nuevo</button>
-            </div>
-          )}
-
-          <div className="space-y-1.5 mb-2">
-            {ingredientes.map((ing, i) => (
-              <div key={i} className="flex items-center justify-between text-sm bg-slate-50 dark:bg-black rounded-lg px-3 py-2">
-                <span className="text-slate-700 dark:text-white truncate">
-                  {ing.nombre} — {ing.cantidad} {ing.unidad}
-                  {ing.tipo === "nuevo" && <span className="text-[10px] text-amber-600 dark:text-amber-400 ml-1.5">(nuevo)</span>}
-                </span>
-                <button onClick={() => quitarIngrediente(i)} className="text-rose-500 text-xs shrink-0 ml-2">✕</button>
-              </div>
-            ))}
-            {ingredientes.length === 0 && <p className="text-sm text-slate-400 py-1">Todavía no agregaste ingredientes.</p>}
-          </div>
-        </div>
-
-        <button disabled={guardando} onClick={guardarLote} className="w-full mt-2 bg-[#E3A73B] text-[#16233D] font-semibold text-sm px-4 py-3 rounded-lg disabled:opacity-50 flex items-center justify-center gap-2">
-          {guardando && <IconLoading />} Guardar lote
-        </button>
       </div>
 
+      {enProceso.length > 0 && (
+        <div className="space-y-4">
+          <h2 className="text-sm font-semibold text-slate-500 dark:text-white/60 uppercase tracking-wide">Lotes en proceso</h2>
+          {enProceso.map(l => (
+            <TarjetaLoteActivo key={l.id} lote={l} productos={productos} onAgregarIngrediente={onAgregarIngrediente} onFinalizar={onFinalizar} onEliminar={eliminarLote} />
+          ))}
+        </div>
+      )}
+
       <div className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-white/10 rounded-2xl p-5">
-        <h2 className="font-semibold text-slate-800 dark:text-white text-sm mb-3">Lotes registrados</h2>
+        <h2 className="font-semibold text-slate-800 dark:text-white text-sm mb-3">Lotes finalizados</h2>
         {cargando ? (
           <p className="text-sm text-slate-400 py-4 text-center">Cargando...</p>
-        ) : lotes.length === 0 ? (
-          <p className="text-sm text-slate-400 py-4 text-center">Todavía no registraste ningún lote.</p>
+        ) : finalizados.length === 0 ? (
+          <p className="text-sm text-slate-400 py-4 text-center">Todavía no finalizaste ningún lote.</p>
         ) : (
           <div className="space-y-2">
-            {lotes.map(l => (
+            {finalizados.map(l => (
               <div key={l.id} className="bg-slate-50 dark:bg-black rounded-lg p-3">
                 <div className="flex items-center justify-between">
-                  <div className="font-medium text-sm text-slate-700 dark:text-white">{l.producto_nombre} — {l.unidades_producidas} u.</div>
+                  <div className="font-medium text-sm text-slate-700 dark:text-white">
+                    {l.producto_nombre}{l.unidades_producidas > 0 ? ` — ${l.unidades_producidas} u.` : ""}
+                  </div>
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-slate-400 dark:text-white/40">{new Date(l.creado_en).toLocaleString()}</span>
                     <button onClick={() => eliminarLote(l)} className="text-slate-400 hover:text-rose-500 text-sm">🗑️</button>
                   </div>
                 </div>
                 <div className="text-xs text-slate-500 dark:text-white/60 mt-1">
-                  {(l.ingredientes || []).map(ing => `${ing.nombre} (${ing.cantidad} ${ing.unidad})`).join(", ")}
+                  {(l.ingredientes || []).map(ing => `${ing.nombre} (${ing.cantidad} ${ing.unidad})`).join(", ") || "Sin ingredientes registrados."}
                 </div>
               </div>
             ))}
@@ -1193,6 +1236,7 @@ function PaginaProduccion({ productos, lotes, cargando, error, onCrear, onElimin
     </div>
   );
 }
+
 
 function PaginaConsumoHogar({ productos, registros, cargando, error, onRegistrar, onEliminar }) {
   const [productoId, setProductoId] = useState("");
@@ -2922,7 +2966,21 @@ function AppInterna({ sesion, onCerrarSesion }) {
 
   useEffect(() => { cargarLotes(); }, [cargarLotes]);
 
-  const handleCrearLote = async (lote) => { await supaApi.crearLote(lote); await cargarLotes(); };
+  const handleIniciarLote = async (nombreProducto) => {
+    await supaApi.crearLote({ producto_nombre: nombreProducto, unidades_producidas: 0, ingredientes: [], estado: "en_proceso" });
+    await cargarLotes();
+  };
+  const handleAgregarIngredienteLote = async (lote, ingrediente) => {
+    const nuevosIngredientes = [...(lote.ingredientes || []), ingrediente];
+    await supaApi.actualizarLote(lote.id, { ingredientes: nuevosIngredientes });
+    await cargarLotes();
+  };
+  const handleFinalizarLote = async (lote, unidades) => {
+    const cambios = { estado: "finalizado" };
+    if (unidades !== null && unidades !== undefined && !isNaN(unidades)) cambios.unidades_producidas = unidades;
+    await supaApi.actualizarLote(lote.id, cambios);
+    await cargarLotes();
+  };
   const handleEliminarLote = async (id) => { await supaApi.eliminarLote(id); await cargarLotes(); };
 
   const stockBajo = productos.filter(p => p.cantidad <= p.minimo).length;
@@ -2947,7 +3005,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
     estadisticas: <PaginaEstadisticas consumoHogar={consumoHogar} />,
     cuentas: <PaginaCuentasPorCobrar clientes={clientes} pagosFiado={pagosFiado} productos={productos} cargando={cargandoCuentas} error={errorCuentas} onRecargar={cargarCuentasPorCobrar} onCrearCliente={handleCrearCliente} onActualizarCliente={handleActualizarCliente} onEliminarCliente={handleEliminarCliente} onCrearFiado={handleCrearFiado} onRegistrarPago={handleRegistrarPago} />,
     consumo: <PaginaConsumoHogar productos={productos} registros={consumoHogar} cargando={cargandoConsumo} error={errorConsumo} onRegistrar={handleRegistrarConsumo} onEliminar={handleEliminarConsumo} />,
-    produccion: <PaginaProduccion productos={productos} lotes={lotes} cargando={cargandoLotes} error={errorLotes} onCrear={handleCrearLote} onEliminar={handleEliminarLote} />,
+    produccion: <PaginaProduccion productos={productos} lotes={lotes} cargando={cargandoLotes} error={errorLotes} onIniciar={handleIniciarLote} onAgregarIngrediente={handleAgregarIngredienteLote} onFinalizar={handleFinalizarLote} onEliminar={handleEliminarLote} />,
     notas: <ProximamenteCard titulo="Notas y recordatorios" descripcion="Un espacio para pedidos pendientes, ideas y tareas del negocio." icon={IconNote} />,
     usuarios: <PaginaUsuarios nombreNegocio={nombreNegocio} />,
     configuracion: <PaginaConfiguracion nombreNegocio={nombreNegocio} setNombreNegocio={setNombreNegocio} logo={logo} onLogoChange={handleLogoChange} onQuitarLogo={quitarLogo} logoInputRef={logoInputRef} />,
