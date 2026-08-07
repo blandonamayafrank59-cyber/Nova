@@ -456,9 +456,10 @@ function Badge({ children, tone = "neutral" }) {
   return <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${tones[tone]}`}>{children}</span>;
 }
 
-function StatCard({ label, value, icon: Icon, accent }) {
-  return (
-    <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl p-4 flex flex-col gap-3">
+function StatCard({ label, value, icon: Icon, accent, onClick }) {
+  const clase = `bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl p-4 flex flex-col gap-3${onClick ? " cursor-pointer hover:border-[#E3A73B]/60 hover:shadow-sm transition-colors text-left w-full" : ""}`;
+  const contenido = (
+    <>
       <div className="flex items-center justify-between">
         <span className="text-xs font-medium text-slate-500 dark:text-white uppercase tracking-wide">{label}</span>
         <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${accent}`}>
@@ -466,8 +467,12 @@ function StatCard({ label, value, icon: Icon, accent }) {
         </div>
       </div>
       <div className="text-2xl font-bold text-slate-800 dark:text-white font-mono">{value}</div>
-    </div>
+    </>
   );
+  if (onClick) {
+    return <button type="button" onClick={onClick} className={clase}>{contenido}</button>;
+  }
+  return <div className={clase}>{contenido}</div>;
 }
 
 function NovaMark({ size = 28, rounded = "rounded-lg" }) {
@@ -832,7 +837,7 @@ function ModalNuevoFiado({ abierto, clientes, productos, onGuardar, onCerrar, gu
   );
 }
 
-function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, error, onRecargar, onCrearCliente, onActualizarCliente, onEliminarCliente, onCrearFiado, onRegistrarPago, puedeEditar = true }) {
+function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, error, onRecargar, onCrearCliente, onActualizarCliente, onEliminarCliente, onCrearFiado, onRegistrarPago, puedeEditar = true, filtroInicial = null }) {
   const [busqueda, setBusqueda] = useState("");
   const [modalCliente, setModalCliente] = useState(false);
   const [clienteEditando, setClienteEditando] = useState(null);
@@ -841,6 +846,7 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
   const [clienteHistorial, setClienteHistorial] = useState(null);
   const [guardando, setGuardando] = useState(false);
   const [eliminandoId, setEliminandoId] = useState(null);
+  const [soloPendientes, setSoloPendientes] = useState(filtroInicial === "pendientes");
 
   const pagosPorCliente = {};
   const ultimaPorCliente = {};
@@ -851,7 +857,7 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
     }
   });
 
-  const clientesFiltrados = clientes.filter(c => c.nombre.toLowerCase().includes(busqueda.toLowerCase()));
+  const clientesFiltrados = clientes.filter(c => c.nombre.toLowerCase().includes(busqueda.toLowerCase()) && (!soloPendientes || Number(c.saldo_pendiente) > 0));
   const totalPorCobrar = clientes.reduce((a, c) => a + (Number(c.saldo_pendiente) || 0), 0);
   const clientesPendientes = clientes.filter(c => Number(c.saldo_pendiente) > 0).length;
   const ahora = new Date();
@@ -919,13 +925,20 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
 
       {error && <div className="bg-rose-50 dark:bg-rose-900/10 border border-rose-200 dark:border-rose-900/30 text-rose-600 dark:text-rose-400 text-sm rounded-lg p-3 mb-4">{error}</div>}
 
-      <input value={busqueda} onChange={(e) => setBusqueda(e.target.value)} placeholder="Buscar cliente..."
-        className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B] mb-4" />
+      <div className="flex items-center gap-2 flex-wrap mb-4">
+        <input value={busqueda} onChange={(e) => setBusqueda(e.target.value)} placeholder="Buscar cliente..."
+          className="flex-1 min-w-[200px] px-3 py-2.5 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
+        {soloPendientes && (
+          <button onClick={() => setSoloPendientes(false)} className="text-xs font-medium px-3 py-1.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 flex items-center gap-1.5 shrink-0">
+            Solo pendientes <span className="font-bold">✕</span>
+          </button>
+        )}
+      </div>
 
       {cargando ? (
         <p className="text-sm text-slate-400 py-6 text-center">Cargando clientes...</p>
       ) : clientesFiltrados.length === 0 ? (
-        <p className="text-sm text-slate-400 py-6 text-center">{clientes.length === 0 ? "Todavía no tenés clientes registrados." : "No se encontraron clientes."}</p>
+        <p className="text-sm text-slate-400 py-6 text-center">{clientes.length === 0 ? "Todavía no tenés clientes registrados." : soloPendientes ? "No hay clientes con saldo pendiente 👍" : "No se encontraron clientes."}</p>
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {clientesFiltrados.map(c => (
@@ -1251,7 +1264,7 @@ Cuando quieras, más adelante podés poner tu correo y contraseña propios desde
   );
 }
 
-function PaginaDashboard({ productos, stockBajo, valorStock, gananciaAcumulada, unidadesVendidas, totalPorCobrar, clientesPendientes, recuperadoMes, verGanancias = true }) {
+function PaginaDashboard({ productos, stockBajo, valorStock, gananciaAcumulada, unidadesVendidas, totalPorCobrar, clientesPendientes, recuperadoMes, verGanancias = true, onNavegar, puedeVerHistorial = true, puedeVerInventario = true, puedeVerCuentas = true }) {
   return (
     <div className="space-y-6">
       <div>
@@ -1260,15 +1273,19 @@ function PaginaDashboard({ productos, stockBajo, valorStock, gananciaAcumulada, 
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="Valor en stock" value={`C$${valorStock.toFixed(2)}`} icon={IconPackage} accent="bg-[#16233D]" />
-        <StatCard label="Unidades vendidas" value={unidadesVendidas} icon={IconCart} accent="bg-[#2471A3]" />
+        <StatCard label="Unidades vendidas" value={unidadesVendidas} icon={IconCart} accent="bg-[#2471A3]"
+          onClick={puedeVerHistorial ? () => onNavegar("historial", "venta") : undefined} />
         {verGanancias && <StatCard label="Ganancia acumulada" value={`C$${gananciaAcumulada.toFixed(2)}`} icon={IconChart} accent="bg-emerald-600" />}
-        <StatCard label="Productos en alerta" value={stockBajo} icon={IconAlert} accent="bg-rose-600" />
+        <StatCard label="Productos en alerta" value={stockBajo} icon={IconAlert} accent="bg-rose-600"
+          onClick={puedeVerInventario ? () => onNavegar("inventario", "stockBajo") : undefined} />
       </div>
       <div>
         <h2 className="text-sm font-semibold text-slate-500 dark:text-white/60 uppercase tracking-wide mb-3">Cuentas por cobrar</h2>
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-          <StatCard label="Total por cobrar" value={`C$${totalPorCobrar.toFixed(2)}`} icon={IconCard} accent="bg-[#16233D]" />
-          <StatCard label="Clientes pendientes" value={clientesPendientes} icon={IconUsers} accent="bg-amber-500" />
+          <StatCard label="Total por cobrar" value={`C$${totalPorCobrar.toFixed(2)}`} icon={IconCard} accent="bg-[#16233D]"
+            onClick={puedeVerCuentas ? () => onNavegar("cuentas", null) : undefined} />
+          <StatCard label="Clientes pendientes" value={clientesPendientes} icon={IconUsers} accent="bg-amber-500"
+            onClick={puedeVerCuentas ? () => onNavegar("cuentas", "pendientes") : undefined} />
           <StatCard label="Recuperado este mes" value={`C$${recuperadoMes.toFixed(2)}`} icon={IconWallet} accent="bg-emerald-600" />
         </div>
       </div>
@@ -1662,13 +1679,14 @@ function ModalProducto({ abierto, producto, onGuardar, onCerrar, guardando }) {
   );
 }
 
-function PaginaInventario({ productos, cargando, error, onRecargar, onCrear, onActualizar, onEliminar, onVentaRegistrada, verCostos = true, puedeEditar = true }) {
+function PaginaInventario({ productos, cargando, error, onRecargar, onCrear, onActualizar, onEliminar, onVentaRegistrada, verCostos = true, puedeEditar = true, filtroInicial = null }) {
   const [busqueda, setBusqueda] = useState("");
   const [modalAbierto, setModalAbierto] = useState(false);
   const [productoEditando, setProductoEditando] = useState(null);
   const [guardando, setGuardando] = useState(false);
+  const [soloStockBajo, setSoloStockBajo] = useState(filtroInicial === "stockBajo");
 
-  const filtrados = productos.filter(p => p.nombre.toLowerCase().includes(busqueda.toLowerCase()));
+  const filtrados = productos.filter(p => p.nombre.toLowerCase().includes(busqueda.toLowerCase()) && (!soloStockBajo || p.cantidad <= p.minimo));
   const abrirNuevo = () => { setProductoEditando(null); setModalAbierto(true); };
   const abrirEditar = (p) => { setProductoEditando(p); setModalAbierto(true); };
 
@@ -1719,16 +1737,23 @@ function PaginaInventario({ productos, cargando, error, onRecargar, onCrear, onA
 
       {error && <div className="bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-sm rounded-lg p-3">{error}</div>}
 
-      <div className="relative max-w-xs">
-        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><IconSearch /></span>
-        <input value={busqueda} onChange={(e) => setBusqueda(e.target.value)} placeholder="Buscar producto..."
-          className="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="relative max-w-xs">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><IconSearch /></span>
+          <input value={busqueda} onChange={(e) => setBusqueda(e.target.value)} placeholder="Buscar producto..."
+            className="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
+        </div>
+        {soloStockBajo && (
+          <button onClick={() => setSoloStockBajo(false)} className="text-xs font-medium px-3 py-1.5 rounded-full bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300 flex items-center gap-1.5">
+            Solo stock bajo <span className="font-bold">✕</span>
+          </button>
+        )}
       </div>
 
       {cargando && productos.length === 0 ? (
         <div className="flex items-center justify-center py-16 text-slate-400 gap-2 text-sm"><IconLoading /> Cargando inventario...</div>
       ) : filtrados.length === 0 ? (
-        <div className="text-center py-16 text-slate-400 text-sm">{productos.length === 0 ? "Todavía no hay productos — agregá el primero." : "Sin resultados para tu búsqueda."}</div>
+        <div className="text-center py-16 text-slate-400 text-sm">{productos.length === 0 ? "Todavía no hay productos — agregá el primero." : soloStockBajo ? "No hay productos con stock bajo 👍" : "Sin resultados para tu búsqueda."}</div>
       ) : (
         <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl overflow-hidden overflow-x-auto">
           <table className="w-full text-sm">
@@ -1776,11 +1801,11 @@ function PaginaInventario({ productos, cargando, error, onRecargar, onCrear, onA
   );
 }
 
-function PaginaHistorial({ productos, onActualizarProducto, onRecargarProductos }) {
+function PaginaHistorial({ productos, onActualizarProducto, onRecargarProductos, filtroInicial = null }) {
   const [eventos, setEventos] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(null);
-  const [filtro, setFiltro] = useState("todos");
+  const [filtro, setFiltro] = useState(filtroInicial || "todos");
 
   const cargar = useCallback(async () => {
     try {
@@ -2412,6 +2437,9 @@ function App() {
 
 function AppInterna({ sesion, onCerrarSesion }) {
   const [pagina, setPagina] = useState("inventario");
+  const [filtroInventario, setFiltroInventario] = useState(null);
+  const [filtroCuentas, setFiltroCuentas] = useState(null);
+  const [filtroHistorial, setFiltroHistorial] = useState(null);
   const [miMembresia, setMiMembresia] = useState(undefined); // undefined = cargando, null = admin principal
   useEffect(() => {
     supaApi.miMembresia().then(setMiMembresia).catch(() => setMiMembresia(null));
@@ -2419,6 +2447,14 @@ function AppInterna({ sesion, onCerrarSesion }) {
   const miRol = miMembresia?.rol || "administrador";
   const permisos = PERMISOS_POR_ROL[miRol] || PERMISOS_POR_ROL.administrador;
   const navVisible = NAV_ITEMS.filter(item => permisos[item.permiso]);
+  // Navega a otra página, opcionalmente con un filtro ya aplicado (ej. desde una tarjeta del Panel general).
+  const irA = (destino, filtro = null) => {
+    if (!permisos[destino]) return;
+    setFiltroInventario(destino === "inventario" ? filtro : null);
+    setFiltroCuentas(destino === "cuentas" ? filtro : null);
+    setFiltroHistorial(destino === "historial" ? filtro : null);
+    setPagina(destino);
+  };
   useEffect(() => {
     if (miMembresia !== undefined && !permisos[pagina]) {
       setPagina(permisos.dashboard ? "dashboard" : "inventario");
@@ -2650,13 +2686,13 @@ function AppInterna({ sesion, onCerrarSesion }) {
   }).reduce((a, p) => a + Number(p.monto), 0);
 
   const paginas = {
-    dashboard: <PaginaDashboard productos={productos} stockBajo={stockBajo} valorStock={valorStock} gananciaAcumulada={gananciaAcumulada} unidadesVendidas={unidadesVendidas} totalPorCobrar={totalPorCobrar} clientesPendientes={clientesPendientes} recuperadoMes={recuperadoMes} verGanancias={permisos.ver_ganancias} />,
-    inventario: <PaginaInventario productos={productos} cargando={cargando} error={error} onRecargar={cargarProductos} onCrear={handleCrear} onActualizar={handleActualizar} onEliminar={handleEliminar} onVentaRegistrada={supaApi.registrarVenta} verCostos={permisos.ver_costos} puedeEditar={permisos.editar} />,
+    dashboard: <PaginaDashboard productos={productos} stockBajo={stockBajo} valorStock={valorStock} gananciaAcumulada={gananciaAcumulada} unidadesVendidas={unidadesVendidas} totalPorCobrar={totalPorCobrar} clientesPendientes={clientesPendientes} recuperadoMes={recuperadoMes} verGanancias={permisos.ver_ganancias} onNavegar={irA} puedeVerHistorial={permisos.historial} puedeVerInventario={permisos.inventario} puedeVerCuentas={permisos.cuentas} />,
+    inventario: <PaginaInventario productos={productos} cargando={cargando} error={error} onRecargar={cargarProductos} onCrear={handleCrear} onActualizar={handleActualizar} onEliminar={handleEliminar} onVentaRegistrada={supaApi.registrarVenta} verCostos={permisos.ver_costos} puedeEditar={permisos.editar} filtroInicial={filtroInventario} />,
     caja: <PaginaCaja />,
     perdidas: <PaginaPerdidas productos={productos} onActualizarProducto={handleActualizar} onRecargarProductos={cargarProductos} puedeEditar={permisos.editar} />,
-    historial: <PaginaHistorial productos={productos} onActualizarProducto={handleActualizar} onRecargarProductos={cargarProductos} />,
+    historial: <PaginaHistorial productos={productos} onActualizarProducto={handleActualizar} onRecargarProductos={cargarProductos} filtroInicial={filtroHistorial} />,
     estadisticas: <PaginaEstadisticas consumoHogar={consumoHogar} />,
-    cuentas: <PaginaCuentasPorCobrar clientes={clientes} pagosFiado={pagosFiado} productos={productos} cargando={cargandoCuentas} error={errorCuentas} onRecargar={cargarCuentasPorCobrar} onCrearCliente={handleCrearCliente} onActualizarCliente={handleActualizarCliente} onEliminarCliente={handleEliminarCliente} onCrearFiado={handleCrearFiado} onRegistrarPago={handleRegistrarPago} puedeEditar={permisos.editar} />,
+    cuentas: <PaginaCuentasPorCobrar clientes={clientes} pagosFiado={pagosFiado} productos={productos} cargando={cargandoCuentas} error={errorCuentas} onRecargar={cargarCuentasPorCobrar} onCrearCliente={handleCrearCliente} onActualizarCliente={handleActualizarCliente} onEliminarCliente={handleEliminarCliente} onCrearFiado={handleCrearFiado} onRegistrarPago={handleRegistrarPago} puedeEditar={permisos.editar} filtroInicial={filtroCuentas} />,
     consumo: <PaginaConsumoHogar productos={productos} registros={consumoHogar} cargando={cargandoConsumo} error={errorConsumo} onRegistrar={handleRegistrarConsumo} onEliminar={handleEliminarConsumo} />,
     notas: <ProximamenteCard titulo="Notas y recordatorios" descripcion="Un espacio para pedidos pendientes, ideas y tareas del negocio." icon={IconNote} />,
     usuarios: <PaginaUsuarios nombreNegocio={nombreNegocio} />,
@@ -2678,7 +2714,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
             {navVisible.map((item) => (
               <React.Fragment key={item.id}>
                 {item.id === "configuracion" && <div className="h-px bg-white/10 my-2 mx-1" />}
-                <button onClick={() => { setPagina(item.id); setSidebarAbierto(false); }}
+                <button onClick={() => { irA(item.id, null); setSidebarAbierto(false); }}
                   className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${pagina === item.id ? "bg-[#E3A73B] text-[#16233D]" : "text-white/80 hover:bg-white/10"}`}>
                   <span className="flex items-center gap-2.5"><item.icon /> {item.label}</span>
                   {!item.listo && <span className="text-[9px] uppercase font-bold bg-white/15 px-1.5 py-0.5 rounded">pronto</span>}
