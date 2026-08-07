@@ -226,6 +226,24 @@ const supaApi = {
     if (!res.ok) throw new Error("No se pudo eliminar la caja");
   },
 
+  // --- Dinero guardado (efectivo apartado, separado de la caja) ---
+  async listarMovimientosGuardado(limite = 100) {
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/dinero_guardado_movimientos?select=*&order=creado_en.desc&limit=${limite}`);
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo cargar el dinero guardado"); }
+    return res.json();
+  },
+  async crearMovimientoGuardado(mov) {
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/dinero_guardado_movimientos`, {
+      method: "POST", extraHeaders: { Prefer: "return=representation" }, body: JSON.stringify(mov),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo registrar el movimiento"); }
+    return res.json();
+  },
+  async eliminarMovimientoGuardado(id) {
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/dinero_guardado_movimientos?id=eq.${id}`, { method: "DELETE" });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo eliminar el movimiento"); }
+  },
+
   // --- Ventas (historial y estadísticas) ---
   async registrarVenta(venta) {
     const res = await peticionApi(`${SUPABASE_URL}/rest/v1/ventas`, {
@@ -1565,6 +1583,7 @@ function PaginaCaja() {
   const [sesion, setSesion] = useState(null);
   const [movimientos, setMovimientos] = useState([]);
   const [historial, setHistorial] = useState([]);
+  const [movsGuardado, setMovsGuardado] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(null);
   const [montoApertura, setMontoApertura] = useState("");
@@ -1572,12 +1591,17 @@ function PaginaCaja() {
   const [nuevaDescripcion, setNuevaDescripcion] = useState("");
   const [nuevoMonto, setNuevoMonto] = useState("");
   const [procesando, setProcesando] = useState(false);
+  const [tipoGuardado, setTipoGuardado] = useState("retiro");
+  const [montoGuardado, setMontoGuardado] = useState("");
+  const [descGuardado, setDescGuardado] = useState("");
+  const [procesandoGuardado, setProcesandoGuardado] = useState(false);
 
   const cargarTodo = useCallback(async () => {
     try {
       setError(null);
-      const s = await supaApi.obtenerSesionAbierta();
+      const [s, guardado] = await Promise.all([supaApi.obtenerSesionAbierta(), supaApi.listarMovimientosGuardado()]);
       setSesion(s);
+      setMovsGuardado(guardado);
       if (s) {
         const movs = await supaApi.listarMovimientos(s.id);
         setMovimientos(movs);
@@ -1598,6 +1622,7 @@ function PaginaCaja() {
   const totalIngresos = movimientos.filter(m => m.tipo === "ingreso").reduce((a, m) => a + Number(m.monto), 0);
   const totalGastos = movimientos.filter(m => m.tipo === "gasto").reduce((a, m) => a + Number(m.monto), 0);
   const saldoActual = sesion ? Number(sesion.monto_inicial) + totalIngresos - totalGastos : 0;
+  const saldoGuardado = movsGuardado.reduce((a, m) => a + (m.tipo === "retiro" ? Number(m.monto) : -Number(m.monto)), 0);
 
   const abrirCaja = async () => {
     const monto = parseFloat(montoApertura) || 0;
@@ -1644,6 +1669,30 @@ function PaginaCaja() {
     catch (e) { alert(e.message); }
   };
 
+  const moverDineroGuardado = async () => {
+    const monto = parseFloat(montoGuardado) || 0;
+    if (monto <= 0) { alert("Poné un monto mayor a 0"); return; }
+    if (tipoGuardado === "retiro" && monto > saldoActual) { alert(`No hay suficiente dinero en la caja. Saldo actual: C$${saldoActual.toFixed(2)}`); return; }
+    if (tipoGuardado === "ingreso" && monto > saldoGuardado) { alert(`No hay suficiente dinero guardado. Guardado actual: C$${saldoGuardado.toFixed(2)}`); return; }
+    setProcesandoGuardado(true);
+    try {
+      const desc = descGuardado.trim() || (tipoGuardado === "retiro" ? "Retiro hacia dinero guardado" : "Ingreso desde dinero guardado");
+      await supaApi.crearMovimiento({
+        sesion_id: sesion.id, tipo: tipoGuardado === "retiro" ? "gasto" : "ingreso", descripcion: desc, monto,
+      });
+      await supaApi.crearMovimientoGuardado({ tipo: tipoGuardado, monto, descripcion: desc });
+      setMontoGuardado(""); setDescGuardado("");
+      await cargarTodo();
+    } catch (e) { alert(e.message); }
+    finally { setProcesandoGuardado(false); }
+  };
+
+  const eliminarMovimientoGuardado = async (m) => {
+    if (!confirm("¿Eliminar este movimiento de dinero guardado? Esto no afecta el saldo de la caja, solo corrige el registro de guardado.")) return;
+    try { await supaApi.eliminarMovimientoGuardado(m.id); await cargarTodo(); }
+    catch (e) { alert(e.message); }
+  };
+
   if (cargando) return <div className="flex items-center justify-center py-16 text-slate-400 gap-2 text-sm"><IconLoading /> Cargando caja...</div>;
 
   return (
@@ -1654,6 +1703,10 @@ function PaginaCaja() {
       </div>
 
       {error && <div className="bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-sm rounded-lg p-3">{error}</div>}
+
+      <div className="max-w-sm">
+        <StatCard label="💰 Dinero guardado (fuera de caja)" value={`C$${saldoGuardado.toFixed(2)}`} icon={IconWallet} accent="bg-amber-500" />
+      </div>
 
       {!sesion ? (
         <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl p-6 max-w-sm">
@@ -1732,6 +1785,46 @@ function PaginaCaja() {
                 ))}
               </div>
             </div>
+          </div>
+
+          <div className="bg-white dark:bg-black border border-amber-300/50 dark:border-amber-500/20 rounded-2xl p-5">
+            <h2 className="font-semibold text-slate-800 dark:text-white text-sm mb-1">Mover dinero guardado</h2>
+            <p className="text-xs text-slate-400 dark:text-white/40 mb-3">Dinero guardado actual: <b className="text-amber-600 dark:text-amber-400">C${saldoGuardado.toFixed(2)}</b></p>
+            <div className="flex gap-2 mb-3">
+              <button onClick={() => setTipoGuardado("retiro")} className={`flex-1 py-2 rounded-lg text-sm font-medium ${tipoGuardado === "retiro" ? "bg-amber-500 text-[#16233D]" : "bg-slate-100 dark:bg-neutral-900 text-slate-600 dark:text-white"}`}>📥 Retirar de la caja</button>
+              <button onClick={() => setTipoGuardado("ingreso")} className={`flex-1 py-2 rounded-lg text-sm font-medium ${tipoGuardado === "ingreso" ? "bg-amber-500 text-[#16233D]" : "bg-slate-100 dark:bg-neutral-900 text-slate-600 dark:text-white"}`}>📤 Meter a la caja</button>
+            </div>
+            <p className="text-xs text-slate-400 dark:text-white/40 mb-3">
+              {tipoGuardado === "retiro" ? "Sacás efectivo de la caja y lo apartás como guardado." : "Traés efectivo guardado de vuelta a la caja."}
+            </p>
+            <div className="grid sm:grid-cols-2 gap-2 mb-3">
+              <input type="number" value={montoGuardado} onChange={(e) => setMontoGuardado(e.target.value)} placeholder="Monto"
+                className="px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm outline-none focus:border-[#E3A73B]" />
+              <input value={descGuardado} onChange={(e) => setDescGuardado(e.target.value)} placeholder="Descripción (opcional)"
+                className="px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm outline-none focus:border-[#E3A73B]" />
+            </div>
+            <button disabled={procesandoGuardado} onClick={moverDineroGuardado} className="w-full bg-amber-500 text-[#16233D] font-semibold text-sm px-4 py-2 rounded-lg disabled:opacity-50 flex items-center justify-center gap-2">
+              {procesandoGuardado && <IconLoading />} Registrar movimiento
+            </button>
+
+            {movsGuardado.length > 0 && (
+              <div className="mt-4 pt-3 border-t border-slate-100 dark:border-white/10 space-y-1.5 max-h-48 overflow-y-auto">
+                {movsGuardado.map(m => (
+                  <div key={m.id} className="flex items-center justify-between text-xs">
+                    <div className="text-slate-600 dark:text-white/70">
+                      {m.tipo === "retiro" ? "📥" : "📤"} {m.descripcion || (m.tipo === "retiro" ? "Retiro hacia guardado" : "Ingreso desde guardado")}
+                      <span className="text-slate-400 dark:text-white/40 ml-1">· {new Date(m.creado_en).toLocaleDateString()}</span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className={`font-mono font-semibold ${m.tipo === "retiro" ? "text-amber-600 dark:text-amber-400" : "text-[#2471A3]"}`}>
+                        {m.tipo === "retiro" ? "+" : "-"}C${Number(m.monto).toFixed(2)}
+                      </span>
+                      <button onClick={() => eliminarMovimientoGuardado(m)} className="text-slate-400 hover:text-rose-500">🗑️</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
