@@ -2652,6 +2652,24 @@ function AppInterna({ sesion, onCerrarSesion }) {
     return () => clearInterval(intervalo);
   }, [cargarConsumoHogar]);
 
+  // Ventas registradas: misma fuente que usa Historial, para que "Unidades vendidas"
+  // del Panel general siempre coincida exactamente con lo que muestra el Historial.
+  const [ventas, setVentas] = useState([]);
+  const cargarVentas = useCallback(async () => {
+    try {
+      const datos = await supaApi.listarVentas();
+      setVentas(datos);
+    } catch (e) {
+      // Si falla, el Panel general simplemente no actualiza este número en este ciclo.
+    }
+  }, []);
+
+  useEffect(() => {
+    cargarVentas();
+    const intervalo = setInterval(cargarVentas, 6000);
+    return () => clearInterval(intervalo);
+  }, [cargarVentas]);
+
   const handleRegistrarConsumo = async ({ producto, cantidad, nota }) => {
     const nuevaCantidad = Math.max(0, producto.cantidad - cantidad);
     await supaApi.actualizarProducto(producto.id, { cantidad: nuevaCantidad });
@@ -2675,7 +2693,10 @@ function AppInterna({ sesion, onCerrarSesion }) {
   const stockBajo = productos.filter(p => p.cantidad <= p.minimo).length;
   const valorStock = productos.reduce((a, p) => a + p.cantidad * p.costo, 0);
   const gananciaAcumulada = productos.reduce((a, p) => a + (p.ganancia_acumulada || 0), 0);
-  const unidadesVendidas = productos.reduce((a, p) => a + (p.vendidos || 0), 0);
+  // Se calcula desde la tabla de ventas (misma fuente que el Historial), no desde el
+  // contador por producto: así ambos módulos siempre muestran el mismo número, incluso
+  // si se elimina una venta o se borra el producto asociado.
+  const unidadesVendidas = ventas.reduce((a, v) => a + Number(v.cantidad), 0);
 
   const totalPorCobrar = clientes.reduce((a, c) => a + (Number(c.saldo_pendiente) || 0), 0);
   const clientesPendientes = clientes.filter(c => Number(c.saldo_pendiente) > 0).length;
