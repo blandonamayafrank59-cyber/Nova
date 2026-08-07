@@ -456,10 +456,9 @@ function Badge({ children, tone = "neutral" }) {
   return <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${tones[tone]}`}>{children}</span>;
 }
 
-function StatCard({ label, value, icon: Icon, accent, onClick }) {
-  const clase = `bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl p-4 flex flex-col gap-3${onClick ? " cursor-pointer hover:border-[#E3A73B]/60 hover:shadow-sm transition-colors text-left w-full" : ""}`;
-  const contenido = (
-    <>
+function StatCard({ label, value, icon: Icon, accent }) {
+  return (
+    <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl p-4 flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <span className="text-xs font-medium text-slate-500 dark:text-white uppercase tracking-wide">{label}</span>
         <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${accent}`}>
@@ -467,12 +466,8 @@ function StatCard({ label, value, icon: Icon, accent, onClick }) {
         </div>
       </div>
       <div className="text-2xl font-bold text-slate-800 dark:text-white font-mono">{value}</div>
-    </>
+    </div>
   );
-  if (onClick) {
-    return <button type="button" onClick={onClick} className={clase}>{contenido}</button>;
-  }
-  return <div className={clase}>{contenido}</div>;
 }
 
 function NovaMark({ size = 28, rounded = "rounded-lg" }) {
@@ -606,7 +601,7 @@ function calcularEstadoCliente(cliente, ultimaActividad) {
   return { label: "Pendiente", dot: "🟡", tono: "warn" };
 }
 
-function TarjetaCliente({ cliente, totalPagado, ultimaActividad, onAbonar, onHistorial, onEditar, onEliminar, puedeEditar = true }) {
+function TarjetaCliente({ cliente, totalPagado, ultimaActividad, onAbonar, onHistorial, onEditar, onEliminar }) {
   const saldo = Number(cliente.saldo_pendiente) || 0;
   const totalOriginal = saldo + totalPagado;
   const progreso = totalOriginal > 0 ? Math.min(100, Math.round((totalPagado / totalOriginal) * 100)) : 100;
@@ -632,10 +627,10 @@ function TarjetaCliente({ cliente, totalPagado, ultimaActividad, onAbonar, onHis
         <div className="text-[10px] text-slate-400 dark:text-white/40 mt-1">{progreso}% pagado</div>
       </div>
       <div className="flex gap-2 mt-1">
-        {puedeEditar && <button onClick={onAbonar} className="flex-1 text-xs font-semibold bg-[#16233D] text-white rounded-lg py-2 hover:brightness-110">➕ Abono</button>}
-        <button onClick={onHistorial} className={`${puedeEditar ? "flex-1" : "w-full"} text-xs font-semibold border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white/80 rounded-lg py-2 hover:bg-slate-50 dark:hover:bg-white/5`}>📋 Historial</button>
-        {puedeEditar && <button onClick={onEditar} title="Editar cliente" className="text-xs px-2.5 rounded-lg border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white/80 hover:bg-slate-50 dark:hover:bg-white/5">✏️</button>}
-        {puedeEditar && <button onClick={onEliminar} title="Eliminar cliente" className="text-xs px-2.5 rounded-lg border border-rose-200 dark:border-rose-900/30 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/10">🗑️</button>}
+        <button onClick={onAbonar} className="flex-1 text-xs font-semibold bg-[#16233D] text-white rounded-lg py-2 hover:brightness-110">➕ Abono</button>
+        <button onClick={onHistorial} className="flex-1 text-xs font-semibold border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white/80 rounded-lg py-2 hover:bg-slate-50 dark:hover:bg-white/5">📋 Historial</button>
+        <button onClick={onEditar} title="Editar cliente" className="text-xs px-2.5 rounded-lg border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white/80 hover:bg-slate-50 dark:hover:bg-white/5">✏️</button>
+        <button onClick={onEliminar} title="Eliminar cliente" className="text-xs px-2.5 rounded-lg border border-rose-200 dark:border-rose-900/30 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/10">🗑️</button>
       </div>
     </div>
   );
@@ -837,7 +832,7 @@ function ModalNuevoFiado({ abierto, clientes, productos, onGuardar, onCerrar, gu
   );
 }
 
-function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, error, onRecargar, onCrearCliente, onActualizarCliente, onEliminarCliente, onCrearFiado, onRegistrarPago, puedeEditar = true, filtroInicial = null }) {
+function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, error, onRecargar, onCrearCliente, onActualizarCliente, onEliminarCliente, onCrearFiado, onRegistrarPago }) {
   const [busqueda, setBusqueda] = useState("");
   const [modalCliente, setModalCliente] = useState(false);
   const [clienteEditando, setClienteEditando] = useState(null);
@@ -846,7 +841,6 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
   const [clienteHistorial, setClienteHistorial] = useState(null);
   const [guardando, setGuardando] = useState(false);
   const [eliminandoId, setEliminandoId] = useState(null);
-  const [soloPendientes, setSoloPendientes] = useState(filtroInicial === "pendientes");
 
   const pagosPorCliente = {};
   const ultimaPorCliente = {};
@@ -857,7 +851,7 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
     }
   });
 
-  const clientesFiltrados = clientes.filter(c => c.nombre.toLowerCase().includes(busqueda.toLowerCase()) && (!soloPendientes || Number(c.saldo_pendiente) > 0));
+  const clientesFiltrados = clientes.filter(c => c.nombre.toLowerCase().includes(busqueda.toLowerCase()));
   const totalPorCobrar = clientes.reduce((a, c) => a + (Number(c.saldo_pendiente) || 0), 0);
   const clientesPendientes = clientes.filter(c => Number(c.saldo_pendiente) > 0).length;
   const ahora = new Date();
@@ -909,12 +903,10 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
           <h1 className="text-xl font-bold text-slate-800 dark:text-white font-display">Cuentas por cobrar</h1>
           <p className="text-sm text-slate-500 dark:text-white/60 mt-1">Fiados, saldos y abonos de tus clientes.</p>
         </div>
-        {puedeEditar && (
-          <div className="flex gap-2">
-            <button onClick={() => { setClienteEditando(null); setModalCliente(true); }} className="text-xs font-semibold px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white/80 hover:bg-slate-50 dark:hover:bg-white/5">+ Cliente</button>
-            <button onClick={() => setModalFiado(true)} className="text-xs font-semibold px-3 py-2 rounded-lg bg-[#E3A73B] text-[#16233D] hover:brightness-105">+ Registrar fiado</button>
-          </div>
-        )}
+        <div className="flex gap-2">
+          <button onClick={() => { setClienteEditando(null); setModalCliente(true); }} className="text-xs font-semibold px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white/80 hover:bg-slate-50 dark:hover:bg-white/5">+ Cliente</button>
+          <button onClick={() => setModalFiado(true)} className="text-xs font-semibold px-3 py-2 rounded-lg bg-[#E3A73B] text-[#16233D] hover:brightness-105">+ Registrar fiado</button>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-5">
@@ -925,24 +917,17 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
 
       {error && <div className="bg-rose-50 dark:bg-rose-900/10 border border-rose-200 dark:border-rose-900/30 text-rose-600 dark:text-rose-400 text-sm rounded-lg p-3 mb-4">{error}</div>}
 
-      <div className="flex items-center gap-2 flex-wrap mb-4">
-        <input value={busqueda} onChange={(e) => setBusqueda(e.target.value)} placeholder="Buscar cliente..."
-          className="flex-1 min-w-[200px] px-3 py-2.5 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
-        {soloPendientes && (
-          <button onClick={() => setSoloPendientes(false)} className="text-xs font-medium px-3 py-1.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 flex items-center gap-1.5 shrink-0">
-            Solo pendientes <span className="font-bold">✕</span>
-          </button>
-        )}
-      </div>
+      <input value={busqueda} onChange={(e) => setBusqueda(e.target.value)} placeholder="Buscar cliente..."
+        className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B] mb-4" />
 
       {cargando ? (
         <p className="text-sm text-slate-400 py-6 text-center">Cargando clientes...</p>
       ) : clientesFiltrados.length === 0 ? (
-        <p className="text-sm text-slate-400 py-6 text-center">{clientes.length === 0 ? "Todavía no tenés clientes registrados." : soloPendientes ? "No hay clientes con saldo pendiente 👍" : "No se encontraron clientes."}</p>
+        <p className="text-sm text-slate-400 py-6 text-center">{clientes.length === 0 ? "Todavía no tenés clientes registrados." : "No se encontraron clientes."}</p>
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {clientesFiltrados.map(c => (
-            <TarjetaCliente key={c.id} cliente={c} totalPagado={pagosPorCliente[c.id] || 0} ultimaActividad={ultimaPorCliente[c.id]} puedeEditar={puedeEditar}
+            <TarjetaCliente key={c.id} cliente={c} totalPagado={pagosPorCliente[c.id] || 0} ultimaActividad={ultimaPorCliente[c.id]}
               onAbonar={() => setClienteAbono(c)} onHistorial={() => setClienteHistorial(c)}
               onEditar={() => { setClienteEditando(c); setModalCliente(true); }} onEliminar={() => eliminarCliente(c)} />
           ))}
@@ -1075,12 +1060,10 @@ function ModalMiembro({ abierto, onGuardar, onCerrar, guardando }) {
   const [form, setForm] = useState({ nombre: "", correo: "", telefono: "", rol: "empleado" });
   useEffect(() => { if (abierto) setForm({ nombre: "", correo: "", telefono: "", rol: "empleado" }); }, [abierto]);
   if (!abierto) return null;
-  const puedeGuardar = form.nombre.trim() && (form.correo.trim() || form.telefono.trim());
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-40">
       <div className="bg-white dark:bg-black rounded-2xl p-6 w-full max-w-sm">
-        <h2 className="font-semibold text-slate-800 dark:text-white mb-1 font-display">Agregar usuario</h2>
-        <p className="text-xs text-slate-400 dark:text-white/40 mb-4">Con solo el teléfono ya podés invitar por WhatsApp — el correo es opcional.</p>
+        <h2 className="font-semibold text-slate-800 dark:text-white mb-4 font-display">Agregar usuario</h2>
         <div className="space-y-3">
           <div>
             <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Nombre</label>
@@ -1091,13 +1074,12 @@ function ModalMiembro({ abierto, onGuardar, onCerrar, guardando }) {
             <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Teléfono / WhatsApp</label>
             <input value={form.telefono} onChange={(e) => setForm({ ...form, telefono: e.target.value })} placeholder="Ej. 8888-8888"
               className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
-            <p className="text-[11px] text-slate-400 dark:text-white/40 mt-1">Le mandamos un link de WhatsApp para que entre directo, sin crear nada.</p>
+            <p className="text-[11px] text-slate-400 dark:text-white/40 mt-1">Con esto alcanza — te abrimos WhatsApp con todo lo que ella necesita para entrar.</p>
           </div>
           <div>
             <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Correo electrónico (opcional)</label>
-            <input type="email" value={form.correo} onChange={(e) => setForm({ ...form, correo: e.target.value })} placeholder="correo@ejemplo.com"
+            <input type="email" value={form.correo} onChange={(e) => setForm({ ...form, correo: e.target.value })} placeholder="Si no tiene, lo generamos solos"
               className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
-            <p className="text-[11px] text-slate-400 dark:text-white/40 mt-1">Solo hace falta si esa persona va a crear su cuenta con correo y contraseña propios.</p>
           </div>
           <div>
             <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Rol</label>
@@ -1109,7 +1091,7 @@ function ModalMiembro({ abierto, onGuardar, onCerrar, guardando }) {
         </div>
         <div className="flex gap-2 justify-end mt-5">
           <button onClick={onCerrar} className="px-4 py-2 rounded-lg text-sm font-medium border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white">Cancelar</button>
-          <button disabled={guardando || !puedeGuardar} onClick={() => onGuardar(form)}
+          <button disabled={guardando || !form.nombre.trim() || (!form.correo.trim() && !form.telefono.trim())} onClick={() => onGuardar(form)}
             className="px-4 py-2 rounded-lg text-sm font-semibold bg-[#E3A73B] text-[#16233D] disabled:opacity-50 flex items-center gap-2">
             {guardando && <IconLoading />} Enviar invitación
           </button>
@@ -1117,13 +1099,6 @@ function ModalMiembro({ abierto, onGuardar, onCerrar, guardando }) {
       </div>
     </div>
   );
-}
-
-function generarCodigoAcceso() {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
-  let codigo = "";
-  for (let i = 0; i < 14; i++) codigo += chars[Math.floor(Math.random() * chars.length)];
-  return codigo;
 }
 
 function PaginaUsuarios({ nombreNegocio }) {
@@ -1150,22 +1125,13 @@ function PaginaUsuarios({ nombreNegocio }) {
   const invitar = async (form) => {
     setGuardando(true);
     try {
-      const correoIngresado = form.correo.trim().toLowerCase();
-      let correoFinal = correoIngresado;
-      let codigoAcceso = null;
-
-      if (!correoIngresado) {
-        // Invitación solo por WhatsApp: se prepara una cuenta de acceso directo,
-        // sin que la persona invitada tenga que crear ni escribir nada.
-        codigoAcceso = generarCodigoAcceso();
-        correoFinal = `acceso.${codigoAcceso.toLowerCase()}@nova.app`;
-        await authApi.signUp(correoFinal, codigoAcceso);
-      }
-
+      const telefonoDigitos = form.telefono.trim().replace(/\D/g, "");
+      const correoFinal = form.correo.trim()
+        ? form.correo.trim().toLowerCase()
+        : `u${telefonoDigitos}@nova-invitado.app`;
       const creado = await supaApi.crearMiembro({
         nombre: form.nombre.trim(), correo: correoFinal, telefono: form.telefono.trim(),
         rol: form.rol, estado: "invitado", nombre_negocio: nombreNegocio.trim() || "el negocio",
-        codigo_acceso: codigoAcceso,
       });
       setModalAbierto(false);
       await cargar();
@@ -1188,27 +1154,16 @@ function PaginaUsuarios({ nombreNegocio }) {
 
   const enlaceWhatsapp = (m) => {
     const telefonoLimpio = (m.telefono || "").replace(/\D/g, "");
-    const numero = telefonoLimpio ? (telefonoLimpio.length <= 8 ? `505${telefonoLimpio}` : telefonoLimpio) : "";
-
-    if (m.codigo_acceso) {
-      // Acceso directo: un solo toque, sin crear cuenta ni escribir correo.
-      const link = `https://mi-negocio-khaki.vercel.app/#acceso=${encodeURIComponent(m.codigo_acceso)}&correo=${encodeURIComponent(m.correo)}`;
-      const mensaje = `Hola ${m.nombre || ""}! 👋 Te invito a usar Nova, la app de nuestro negocio.
-
-Solo tocá este link y vas a entrar directo, sin crear nada:
-${link}
-
-Cuando quieras, más adelante podés poner tu correo y contraseña propios desde tu perfil.`;
-      return `https://wa.me/${numero}?text=${encodeURIComponent(mensaje)}`;
-    }
-
     const mensaje = `Hola ${m.nombre || ""}! 👋 Te invito a usar la app de nuestro negocio, Nova.
 
 1️⃣ Abrí este enlace: https://mi-negocio-khaki.vercel.app
 2️⃣ Tocá "Crear cuenta"
-3️⃣ Usá este correo: ${m.correo}
-4️⃣ Ponés la contraseña que vos quieras
-5️⃣ En cuanto entrés, te va a aparecer un mensaje de bienvenida — tocá el botón dorado y listo, ya vas a estar adentro`;
+3️⃣ Correo: ${m.correo}
+4️⃣ Contraseña: ${telefonoLimpio || "la que vos quieras"}
+5️⃣ En cuanto entrés, te va a aparecer un mensaje de bienvenida — tocá el botón dorado y listo, ya vas a estar adentro
+
+(Copiá y pegá el correo y la contraseña tal como están aquí arriba)`;
+    const numero = telefonoLimpio ? (telefonoLimpio.length <= 8 ? `505${telefonoLimpio}` : telefonoLimpio) : "";
     return `https://wa.me/${numero}?text=${encodeURIComponent(mensaje)}`;
   };
 
@@ -1239,7 +1194,7 @@ Cuando quieras, más adelante podés poner tu correo y contraseña propios desde
             <div key={m.id} className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-white/10 rounded-2xl p-4 flex items-center justify-between gap-3 flex-wrap">
               <div className="min-w-0">
                 <div className="font-semibold text-slate-800 dark:text-white truncate">{m.nombre || m.correo}</div>
-                <div className="text-xs text-slate-400 dark:text-white/40 truncate">{m.codigo_acceso ? (m.telefono || "Acceso directo por WhatsApp") : m.correo}{m.telefono && m.codigo_acceso ? "" : (m.telefono ? ` · ${m.telefono}` : "")}</div>
+                <div className="text-xs text-slate-400 dark:text-white/40 truncate">{m.correo}{m.telefono ? ` · ${m.telefono}` : ""}</div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <Badge tone={m.estado === "activo" ? "ok" : "warn"}>{m.estado === "activo" ? "Activo" : "Invitado"}</Badge>
@@ -1264,7 +1219,7 @@ Cuando quieras, más adelante podés poner tu correo y contraseña propios desde
   );
 }
 
-function PaginaDashboard({ productos, stockBajo, valorStock, gananciaAcumulada, unidadesVendidas, totalPorCobrar, clientesPendientes, recuperadoMes, verGanancias = true, onNavegar, puedeVerHistorial = true, puedeVerInventario = true, puedeVerCuentas = true }) {
+function PaginaDashboard({ productos, stockBajo, valorStock, gananciaAcumulada, unidadesVendidas, totalPorCobrar, clientesPendientes, recuperadoMes, verGanancias = true }) {
   return (
     <div className="space-y-6">
       <div>
@@ -1273,19 +1228,15 @@ function PaginaDashboard({ productos, stockBajo, valorStock, gananciaAcumulada, 
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="Valor en stock" value={`C$${valorStock.toFixed(2)}`} icon={IconPackage} accent="bg-[#16233D]" />
-        <StatCard label="Unidades vendidas" value={unidadesVendidas} icon={IconCart} accent="bg-[#2471A3]"
-          onClick={puedeVerHistorial ? () => onNavegar("historial", "venta") : undefined} />
+        <StatCard label="Unidades vendidas" value={unidadesVendidas} icon={IconCart} accent="bg-[#2471A3]" />
         {verGanancias && <StatCard label="Ganancia acumulada" value={`C$${gananciaAcumulada.toFixed(2)}`} icon={IconChart} accent="bg-emerald-600" />}
-        <StatCard label="Productos en alerta" value={stockBajo} icon={IconAlert} accent="bg-rose-600"
-          onClick={puedeVerInventario ? () => onNavegar("inventario", "stockBajo") : undefined} />
+        <StatCard label="Productos en alerta" value={stockBajo} icon={IconAlert} accent="bg-rose-600" />
       </div>
       <div>
         <h2 className="text-sm font-semibold text-slate-500 dark:text-white/60 uppercase tracking-wide mb-3">Cuentas por cobrar</h2>
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-          <StatCard label="Total por cobrar" value={`C$${totalPorCobrar.toFixed(2)}`} icon={IconCard} accent="bg-[#16233D]"
-            onClick={puedeVerCuentas ? () => onNavegar("cuentas", null) : undefined} />
-          <StatCard label="Clientes pendientes" value={clientesPendientes} icon={IconUsers} accent="bg-amber-500"
-            onClick={puedeVerCuentas ? () => onNavegar("cuentas", "pendientes") : undefined} />
+          <StatCard label="Total por cobrar" value={`C$${totalPorCobrar.toFixed(2)}`} icon={IconCard} accent="bg-[#16233D]" />
+          <StatCard label="Clientes pendientes" value={clientesPendientes} icon={IconUsers} accent="bg-amber-500" />
           <StatCard label="Recuperado este mes" value={`C$${recuperadoMes.toFixed(2)}`} icon={IconWallet} accent="bg-emerald-600" />
         </div>
       </div>
@@ -1492,7 +1443,7 @@ function PaginaCaja() {
   );
 }
 
-function PaginaPerdidas({ productos, onActualizarProducto, onRecargarProductos, puedeEditar = true }) {
+function PaginaPerdidas({ productos, onActualizarProducto, onRecargarProductos }) {
   const [perdidas, setPerdidas] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(null);
@@ -1563,37 +1514,35 @@ function PaginaPerdidas({ productos, onActualizarProducto, onRecargarProductos, 
       {error && <div className="bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-sm rounded-lg p-3">{error}</div>}
 
       <div className="grid lg:grid-cols-3 gap-4">
-        {puedeEditar && (
-          <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl p-5">
-            <h2 className="font-semibold text-slate-800 dark:text-white text-sm mb-3">Registrar pérdida</h2>
-            <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Producto</label>
-            <select value={productoId} onChange={(e) => setProductoId(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm mb-3 outline-none focus:border-[#E3A73B]">
-              <option value="">Seleccioná un producto</option>
-              {productos.map(p => <option key={p.id} value={p.id}>{p.nombre} (stock: {p.cantidad})</option>)}
-            </select>
-            <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Cantidad perdida</label>
-            <input type="number" value={cantidad} onChange={(e) => setCantidad(e.target.value)} placeholder="0"
-              className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm mb-3 outline-none focus:border-[#E3A73B]" />
-            <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Motivo</label>
-            <select value={motivo} onChange={(e) => setMotivo(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm mb-3 outline-none focus:border-[#E3A73B]">
-              <option value="dañado">Producto dañado</option>
-              <option value="perdido">Producto perdido</option>
-              <option value="vencido">Producto vencido</option>
-            </select>
-            {productoSeleccionado && cantidadNum > 0 && (
-              <div className="bg-rose-50 dark:bg-rose-900/20 rounded-lg p-3 text-xs text-rose-700 dark:text-rose-300 mb-3">
-                Valor perdido estimado: <b>C${valorPerdido.toFixed(2)}</b>
-              </div>
-            )}
-            <button disabled={procesando} onClick={registrar} className="w-full bg-rose-600 text-white font-semibold text-sm px-4 py-2 rounded-lg disabled:opacity-50 flex items-center justify-center gap-2">
-              {procesando && <IconLoading />} Registrar pérdida
-            </button>
-          </div>
-        )}
+        <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl p-5">
+          <h2 className="font-semibold text-slate-800 dark:text-white text-sm mb-3">Registrar pérdida</h2>
+          <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Producto</label>
+          <select value={productoId} onChange={(e) => setProductoId(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm mb-3 outline-none focus:border-[#E3A73B]">
+            <option value="">Seleccioná un producto</option>
+            {productos.map(p => <option key={p.id} value={p.id}>{p.nombre} (stock: {p.cantidad})</option>)}
+          </select>
+          <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Cantidad perdida</label>
+          <input type="number" value={cantidad} onChange={(e) => setCantidad(e.target.value)} placeholder="0"
+            className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm mb-3 outline-none focus:border-[#E3A73B]" />
+          <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Motivo</label>
+          <select value={motivo} onChange={(e) => setMotivo(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm mb-3 outline-none focus:border-[#E3A73B]">
+            <option value="dañado">Producto dañado</option>
+            <option value="perdido">Producto perdido</option>
+            <option value="vencido">Producto vencido</option>
+          </select>
+          {productoSeleccionado && cantidadNum > 0 && (
+            <div className="bg-rose-50 dark:bg-rose-900/20 rounded-lg p-3 text-xs text-rose-700 dark:text-rose-300 mb-3">
+              Valor perdido estimado: <b>C${valorPerdido.toFixed(2)}</b>
+            </div>
+          )}
+          <button disabled={procesando} onClick={registrar} className="w-full bg-rose-600 text-white font-semibold text-sm px-4 py-2 rounded-lg disabled:opacity-50 flex items-center justify-center gap-2">
+            {procesando && <IconLoading />} Registrar pérdida
+          </button>
+        </div>
 
-        <div className={`${puedeEditar ? "lg:col-span-2" : "lg:col-span-3"} space-y-4`}>
+        <div className="lg:col-span-2 space-y-4">
           <StatCard label="Total perdido acumulado" value={`C$${totalPerdido.toFixed(2)}`} icon={IconAlert} accent="bg-rose-600" />
           <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl p-5">
             <h2 className="font-semibold text-slate-800 dark:text-white text-sm mb-3">Historial de pérdidas</h2>
@@ -1611,7 +1560,7 @@ function PaginaPerdidas({ productos, onActualizarProducto, onRecargarProductos, 
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="font-mono font-semibold text-sm text-rose-600 dark:text-rose-400">-C${Number(p.valor_perdido).toFixed(2)}</div>
-                      {puedeEditar && <button onClick={() => eliminarPerdida(p)} className="text-slate-400 hover:text-rose-500 text-sm">🗑️</button>}
+                      <button onClick={() => eliminarPerdida(p)} className="text-slate-400 hover:text-rose-500 text-sm">🗑️</button>
                     </div>
                   </div>
                 ))}
@@ -1619,6 +1568,27 @@ function PaginaPerdidas({ productos, onActualizarProducto, onRecargarProductos, 
             )}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function ModalAccionesProducto({ producto, onEditar, onEliminar, onCerrar }) {
+  if (!producto) return null;
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-40" onClick={onCerrar}>
+      <div onClick={(e) => e.stopPropagation()} className="bg-white dark:bg-black rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-xs">
+        <div className="font-semibold text-slate-800 dark:text-white mb-1 font-display truncate">{producto.nombre}</div>
+        <div className="text-xs text-slate-400 dark:text-white/40 mb-4">Stock: {producto.cantidad} · C${Number(producto.venta).toFixed(2)}</div>
+        <div className="space-y-1.5">
+          <button onClick={onEditar} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5">
+            ✏️ Editar producto
+          </button>
+          <button onClick={onEliminar} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/10 flex items-center gap-2.5">
+            🗑️ Eliminar producto
+          </button>
+        </div>
+        <button onClick={onCerrar} className="w-full mt-3 px-3 py-2.5 rounded-lg text-sm font-medium border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white">Cancelar</button>
       </div>
     </div>
   );
@@ -1679,14 +1649,14 @@ function ModalProducto({ abierto, producto, onGuardar, onCerrar, guardando }) {
   );
 }
 
-function PaginaInventario({ productos, cargando, error, onRecargar, onCrear, onActualizar, onEliminar, onVentaRegistrada, verCostos = true, puedeEditar = true, filtroInicial = null }) {
+function PaginaInventario({ productos, cargando, error, onRecargar, onCrear, onActualizar, onEliminar, onVentaRegistrada, verCostos = true, puedeEditar = true }) {
   const [busqueda, setBusqueda] = useState("");
   const [modalAbierto, setModalAbierto] = useState(false);
   const [productoEditando, setProductoEditando] = useState(null);
   const [guardando, setGuardando] = useState(false);
-  const [soloStockBajo, setSoloStockBajo] = useState(filtroInicial === "stockBajo");
+  const [productoMenu, setProductoMenu] = useState(null);
 
-  const filtrados = productos.filter(p => p.nombre.toLowerCase().includes(busqueda.toLowerCase()) && (!soloStockBajo || p.cantidad <= p.minimo));
+  const filtrados = productos.filter(p => p.nombre.toLowerCase().includes(busqueda.toLowerCase()));
   const abrirNuevo = () => { setProductoEditando(null); setModalAbierto(true); };
   const abrirEditar = (p) => { setProductoEditando(p); setModalAbierto(true); };
 
@@ -1737,23 +1707,16 @@ function PaginaInventario({ productos, cargando, error, onRecargar, onCrear, onA
 
       {error && <div className="bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-sm rounded-lg p-3">{error}</div>}
 
-      <div className="flex items-center gap-2 flex-wrap">
-        <div className="relative max-w-xs">
-          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><IconSearch /></span>
-          <input value={busqueda} onChange={(e) => setBusqueda(e.target.value)} placeholder="Buscar producto..."
-            className="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
-        </div>
-        {soloStockBajo && (
-          <button onClick={() => setSoloStockBajo(false)} className="text-xs font-medium px-3 py-1.5 rounded-full bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300 flex items-center gap-1.5">
-            Solo stock bajo <span className="font-bold">✕</span>
-          </button>
-        )}
+      <div className="relative max-w-xs">
+        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><IconSearch /></span>
+        <input value={busqueda} onChange={(e) => setBusqueda(e.target.value)} placeholder="Buscar producto..."
+          className="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
       </div>
 
       {cargando && productos.length === 0 ? (
         <div className="flex items-center justify-center py-16 text-slate-400 gap-2 text-sm"><IconLoading /> Cargando inventario...</div>
       ) : filtrados.length === 0 ? (
-        <div className="text-center py-16 text-slate-400 text-sm">{productos.length === 0 ? "Todavía no hay productos — agregá el primero." : soloStockBajo ? "No hay productos con stock bajo 👍" : "Sin resultados para tu búsqueda."}</div>
+        <div className="text-center py-16 text-slate-400 text-sm">{productos.length === 0 ? "Todavía no hay productos — agregá el primero." : "Sin resultados para tu búsqueda."}</div>
       ) : (
         <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl overflow-hidden overflow-x-auto">
           <table className="w-full text-sm">
@@ -1775,7 +1738,7 @@ function PaginaInventario({ productos, cargando, error, onRecargar, onCrear, onA
                 const margen = p.costo > 0 ? ((p.venta - p.costo) / p.costo * 100).toFixed(0) : 0;
                 return (
                   <tr key={p.id} className={`border-t border-slate-100 dark:border-white/10 ${i % 2 === 1 ? "bg-slate-50/60 dark:bg-black" : ""}`}>
-                    <td className="px-4 py-3 font-medium text-slate-700 dark:text-white">{p.nombre}</td>
+                    <td onClick={() => puedeEditar && setProductoMenu(p)} className={`px-4 py-3 font-medium text-slate-700 dark:text-white ${puedeEditar ? "cursor-pointer active:opacity-60" : ""}`}>{p.nombre}</td>
                     <td className="px-4 py-3 text-slate-500 dark:text-white hidden sm:table-cell">{p.categoria}</td>
                     <td className="px-4 py-3 text-right font-mono text-slate-700 dark:text-white">{p.cantidad}</td>
                     {verCostos && <td className="px-4 py-3 text-right font-mono text-slate-500 dark:text-white hidden md:table-cell">C${Number(p.costo).toFixed(2)}</td>}
@@ -1784,9 +1747,7 @@ function PaginaInventario({ productos, cargando, error, onRecargar, onCrear, onA
                     <td className="px-4 py-3 text-center">{bajo ? <Badge tone="danger">Stock bajo</Badge> : <Badge tone="ok">Bien</Badge>}</td>
                     <td className="px-4 py-3">
                       <div className="flex gap-1 justify-end">
-                        {puedeEditar && <button onClick={() => vender(p, 1)} className="text-xs px-2 py-1 rounded bg-[#2471A3] text-white font-medium">-1</button>}
-                        {puedeEditar && <button onClick={() => abrirEditar(p)} className="text-xs px-2 py-1 rounded border border-slate-200 dark:border-white/20 text-slate-600 dark:text-white">Editar</button>}
-                        {puedeEditar && <button onClick={() => { if (confirm("¿Eliminar este producto?")) onEliminar(p.id); }} className="text-xs px-2 py-1 rounded text-rose-600 dark:text-rose-400">Eliminar</button>}
+                        {puedeEditar && <button onClick={() => vender(p, 1)} className="text-xs px-2.5 py-1.5 rounded bg-[#2471A3] text-white font-semibold">-1</button>}
                       </div>
                     </td>
                   </tr>
@@ -1796,16 +1757,20 @@ function PaginaInventario({ productos, cargando, error, onRecargar, onCrear, onA
           </table>
         </div>
       )}
+      <ModalAccionesProducto producto={productoMenu}
+        onEditar={() => { abrirEditar(productoMenu); setProductoMenu(null); }}
+        onEliminar={() => { if (confirm(`¿Eliminar ${productoMenu.nombre}?`)) onEliminar(productoMenu.id); setProductoMenu(null); }}
+        onCerrar={() => setProductoMenu(null)} />
       <ModalProducto abierto={modalAbierto} producto={productoEditando} onGuardar={guardar} onCerrar={() => setModalAbierto(false)} guardando={guardando} />
     </div>
   );
 }
 
-function PaginaHistorial({ productos, onActualizarProducto, onRecargarProductos, filtroInicial = null }) {
+function PaginaHistorial({ productos, onActualizarProducto, onRecargarProductos }) {
   const [eventos, setEventos] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(null);
-  const [filtro, setFiltro] = useState(filtroInicial || "todos");
+  const [filtro, setFiltro] = useState("todos");
 
   const cargar = useCallback(async () => {
     try {
@@ -2311,47 +2276,12 @@ function PantallaInvitacion({ invitacion, onAceptada }) {
   );
 }
 
-function PantallaEntrandoAcceso() {
-  return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-      <div className="bg-white border border-slate-200 rounded-2xl p-6 w-full max-w-sm text-center">
-        <div className="flex justify-center mb-4"><NovaBrand theme="light" size="md" /></div>
-        <div className="flex items-center justify-center gap-2 text-sm text-slate-500 py-4">
-          <IconLoading /> Entrando a tu cuenta...
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function PantallaAccesoInvalido({ onVolver }) {
-  return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-      <div className="bg-white border border-slate-200 rounded-2xl p-6 w-full max-w-sm text-center">
-        <div className="flex justify-center mb-4"><NovaBrand theme="light" size="md" /></div>
-        <p className="text-sm text-slate-500 mb-5">Este enlace de acceso ya no es válido. Pedile a quien te invitó que te envíe uno nuevo por WhatsApp.</p>
-        <button onClick={onVolver} className="w-full bg-[#E3A73B] text-[#16233D] font-semibold text-sm px-4 py-2.5 rounded-lg">Ir a iniciar sesión</button>
-      </div>
-    </div>
-  );
-}
-
 function App() {
   const [tokenRecuperacion] = useState(() => {
     const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
     const params = new URLSearchParams(hash);
     return params.get("type") === "recovery" ? params.get("access_token") : null;
   });
-
-  const [accesoDirecto] = useState(() => {
-    const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
-    const params = new URLSearchParams(hash);
-    const acceso = params.get("acceso");
-    const correo = params.get("correo");
-    return acceso && correo ? { acceso, correo } : null;
-  });
-  const [procesandoAccesoDirecto, setProcesandoAccesoDirecto] = useState(!!accesoDirecto);
-  const [accesoDirectoInvalido, setAccesoDirectoInvalido] = useState(false);
 
   const [sesion, setSesionState] = useState(() => {
     try { return JSON.parse(localStorage.getItem("mi_negocio_sesion")) || null; }
@@ -2396,32 +2326,8 @@ function App() {
     return () => clearInterval(intervalo);
   }, [sesion]);
 
-  // Acceso directo por WhatsApp: entra sola con las credenciales del link, sin pedir nada.
-  useEffect(() => {
-    if (!accesoDirecto || sesion) { if (procesandoAccesoDirecto) setProcesandoAccesoDirecto(false); return; }
-    (async () => {
-      try {
-        const data = await authApi.signIn(accesoDirecto.correo, accesoDirecto.acceso);
-        window.location.hash = "";
-        guardarSesion(data);
-      } catch (e) {
-        setAccesoDirectoInvalido(true);
-      } finally {
-        setProcesandoAccesoDirecto(false);
-      }
-    })();
-  }, [accesoDirecto]);
-
   if (tokenRecuperacion) {
     return <PantallaNuevaPassword accessToken={tokenRecuperacion} onListo={() => { window.location.hash = ""; window.location.reload(); }} />;
-  }
-
-  if (procesandoAccesoDirecto) {
-    return <PantallaEntrandoAcceso />;
-  }
-
-  if (accesoDirectoInvalido && !sesion) {
-    return <PantallaAccesoInvalido onVolver={() => { window.location.hash = ""; window.location.reload(); }} />;
   }
 
   if (!sesion) {
@@ -2437,9 +2343,6 @@ function App() {
 
 function AppInterna({ sesion, onCerrarSesion }) {
   const [pagina, setPagina] = useState("inventario");
-  const [filtroInventario, setFiltroInventario] = useState(null);
-  const [filtroCuentas, setFiltroCuentas] = useState(null);
-  const [filtroHistorial, setFiltroHistorial] = useState(null);
   const [miMembresia, setMiMembresia] = useState(undefined); // undefined = cargando, null = admin principal
   useEffect(() => {
     supaApi.miMembresia().then(setMiMembresia).catch(() => setMiMembresia(null));
@@ -2447,14 +2350,6 @@ function AppInterna({ sesion, onCerrarSesion }) {
   const miRol = miMembresia?.rol || "administrador";
   const permisos = PERMISOS_POR_ROL[miRol] || PERMISOS_POR_ROL.administrador;
   const navVisible = NAV_ITEMS.filter(item => permisos[item.permiso]);
-  // Navega a otra página, opcionalmente con un filtro ya aplicado (ej. desde una tarjeta del Panel general).
-  const irA = (destino, filtro = null) => {
-    if (!permisos[destino]) return;
-    setFiltroInventario(destino === "inventario" ? filtro : null);
-    setFiltroCuentas(destino === "cuentas" ? filtro : null);
-    setFiltroHistorial(destino === "historial" ? filtro : null);
-    setPagina(destino);
-  };
   useEffect(() => {
     if (miMembresia !== undefined && !permisos[pagina]) {
       setPagina(permisos.dashboard ? "dashboard" : "inventario");
@@ -2652,24 +2547,6 @@ function AppInterna({ sesion, onCerrarSesion }) {
     return () => clearInterval(intervalo);
   }, [cargarConsumoHogar]);
 
-  // Ventas registradas: misma fuente que usa Historial, para que "Unidades vendidas"
-  // del Panel general siempre coincida exactamente con lo que muestra el Historial.
-  const [ventas, setVentas] = useState([]);
-  const cargarVentas = useCallback(async () => {
-    try {
-      const datos = await supaApi.listarVentas();
-      setVentas(datos);
-    } catch (e) {
-      // Si falla, el Panel general simplemente no actualiza este número en este ciclo.
-    }
-  }, []);
-
-  useEffect(() => {
-    cargarVentas();
-    const intervalo = setInterval(cargarVentas, 6000);
-    return () => clearInterval(intervalo);
-  }, [cargarVentas]);
-
   const handleRegistrarConsumo = async ({ producto, cantidad, nota }) => {
     const nuevaCantidad = Math.max(0, producto.cantidad - cantidad);
     await supaApi.actualizarProducto(producto.id, { cantidad: nuevaCantidad });
@@ -2693,10 +2570,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
   const stockBajo = productos.filter(p => p.cantidad <= p.minimo).length;
   const valorStock = productos.reduce((a, p) => a + p.cantidad * p.costo, 0);
   const gananciaAcumulada = productos.reduce((a, p) => a + (p.ganancia_acumulada || 0), 0);
-  // Se calcula desde la tabla de ventas (misma fuente que el Historial), no desde el
-  // contador por producto: así ambos módulos siempre muestran el mismo número, incluso
-  // si se elimina una venta o se borra el producto asociado.
-  const unidadesVendidas = ventas.reduce((a, v) => a + Number(v.cantidad), 0);
+  const unidadesVendidas = productos.reduce((a, p) => a + (p.vendidos || 0), 0);
 
   const totalPorCobrar = clientes.reduce((a, c) => a + (Number(c.saldo_pendiente) || 0), 0);
   const clientesPendientes = clientes.filter(c => Number(c.saldo_pendiente) > 0).length;
@@ -2707,13 +2581,13 @@ function AppInterna({ sesion, onCerrarSesion }) {
   }).reduce((a, p) => a + Number(p.monto), 0);
 
   const paginas = {
-    dashboard: <PaginaDashboard productos={productos} stockBajo={stockBajo} valorStock={valorStock} gananciaAcumulada={gananciaAcumulada} unidadesVendidas={unidadesVendidas} totalPorCobrar={totalPorCobrar} clientesPendientes={clientesPendientes} recuperadoMes={recuperadoMes} verGanancias={permisos.ver_ganancias} onNavegar={irA} puedeVerHistorial={permisos.historial} puedeVerInventario={permisos.inventario} puedeVerCuentas={permisos.cuentas} />,
-    inventario: <PaginaInventario productos={productos} cargando={cargando} error={error} onRecargar={cargarProductos} onCrear={handleCrear} onActualizar={handleActualizar} onEliminar={handleEliminar} onVentaRegistrada={supaApi.registrarVenta} verCostos={permisos.ver_costos} puedeEditar={permisos.editar} filtroInicial={filtroInventario} />,
+    dashboard: <PaginaDashboard productos={productos} stockBajo={stockBajo} valorStock={valorStock} gananciaAcumulada={gananciaAcumulada} unidadesVendidas={unidadesVendidas} totalPorCobrar={totalPorCobrar} clientesPendientes={clientesPendientes} recuperadoMes={recuperadoMes} verGanancias={permisos.ver_ganancias} />,
+    inventario: <PaginaInventario productos={productos} cargando={cargando} error={error} onRecargar={cargarProductos} onCrear={handleCrear} onActualizar={handleActualizar} onEliminar={handleEliminar} onVentaRegistrada={supaApi.registrarVenta} verCostos={permisos.ver_costos} puedeEditar={permisos.editar} />,
     caja: <PaginaCaja />,
-    perdidas: <PaginaPerdidas productos={productos} onActualizarProducto={handleActualizar} onRecargarProductos={cargarProductos} puedeEditar={permisos.editar} />,
-    historial: <PaginaHistorial productos={productos} onActualizarProducto={handleActualizar} onRecargarProductos={cargarProductos} filtroInicial={filtroHistorial} />,
+    perdidas: <PaginaPerdidas productos={productos} onActualizarProducto={handleActualizar} onRecargarProductos={cargarProductos} />,
+    historial: <PaginaHistorial productos={productos} onActualizarProducto={handleActualizar} onRecargarProductos={cargarProductos} />,
     estadisticas: <PaginaEstadisticas consumoHogar={consumoHogar} />,
-    cuentas: <PaginaCuentasPorCobrar clientes={clientes} pagosFiado={pagosFiado} productos={productos} cargando={cargandoCuentas} error={errorCuentas} onRecargar={cargarCuentasPorCobrar} onCrearCliente={handleCrearCliente} onActualizarCliente={handleActualizarCliente} onEliminarCliente={handleEliminarCliente} onCrearFiado={handleCrearFiado} onRegistrarPago={handleRegistrarPago} puedeEditar={permisos.editar} filtroInicial={filtroCuentas} />,
+    cuentas: <PaginaCuentasPorCobrar clientes={clientes} pagosFiado={pagosFiado} productos={productos} cargando={cargandoCuentas} error={errorCuentas} onRecargar={cargarCuentasPorCobrar} onCrearCliente={handleCrearCliente} onActualizarCliente={handleActualizarCliente} onEliminarCliente={handleEliminarCliente} onCrearFiado={handleCrearFiado} onRegistrarPago={handleRegistrarPago} />,
     consumo: <PaginaConsumoHogar productos={productos} registros={consumoHogar} cargando={cargandoConsumo} error={errorConsumo} onRegistrar={handleRegistrarConsumo} onEliminar={handleEliminarConsumo} />,
     notas: <ProximamenteCard titulo="Notas y recordatorios" descripcion="Un espacio para pedidos pendientes, ideas y tareas del negocio." icon={IconNote} />,
     usuarios: <PaginaUsuarios nombreNegocio={nombreNegocio} />,
@@ -2735,7 +2609,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
             {navVisible.map((item) => (
               <React.Fragment key={item.id}>
                 {item.id === "configuracion" && <div className="h-px bg-white/10 my-2 mx-1" />}
-                <button onClick={() => { irA(item.id, null); setSidebarAbierto(false); }}
+                <button onClick={() => { setPagina(item.id); setSidebarAbierto(false); }}
                   className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${pagina === item.id ? "bg-[#E3A73B] text-[#16233D]" : "text-white/80 hover:bg-white/10"}`}>
                   <span className="flex items-center gap-2.5"><item.icon /> {item.label}</span>
                   {!item.listo && <span className="text-[9px] uppercase font-bold bg-white/15 px-1.5 py-0.5 rounded">pronto</span>}
