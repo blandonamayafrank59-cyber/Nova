@@ -1676,6 +1676,7 @@ function PaginaCaja() {
   const [editandoGuardado, setEditandoGuardado] = useState(false);
   const [montoGuardadoEditar, setMontoGuardadoEditar] = useState("");
   const [nuevoTipo, setNuevoTipo] = useState("ingreso");
+  const [fuenteGasto, setFuenteGasto] = useState("caja");
   const [nuevaDescripcion, setNuevaDescripcion] = useState("");
   const [nuevoMonto, setNuevoMonto] = useState("");
   const [procesando, setProcesando] = useState(false);
@@ -1805,9 +1806,15 @@ function PaginaCaja() {
   const registrarMovimiento = async () => {
     const monto = parseFloat(nuevoMonto) || 0;
     if (monto <= 0) { alert("Poné un monto mayor a 0"); return; }
+    const esGastoDesdeGuardado = nuevoTipo === "gasto" && fuenteGasto === "guardado";
+    if (esGastoDesdeGuardado && monto > saldoGuardado) { alert(`No hay suficiente dinero guardado. Guardado actual: C$${saldoGuardado.toFixed(2)}`); return; }
     setProcesando(true);
     try {
-      await supaApi.crearMovimiento({ sesion_id: sesion.id, tipo: nuevoTipo, descripcion: nuevaDescripcion.trim(), monto });
+      if (esGastoDesdeGuardado) {
+        await supaApi.crearMovimientoGuardado({ tipo: "ingreso", monto, descripcion: nuevaDescripcion.trim() || "Gasto pagado con dinero guardado" });
+      } else {
+        await supaApi.crearMovimiento({ sesion_id: sesion.id, tipo: nuevoTipo, descripcion: nuevaDescripcion.trim(), monto });
+      }
       setNuevaDescripcion(""); setNuevoMonto("");
       await cargarTodo();
     } catch (e) { alert(e.message); }
@@ -1929,6 +1936,15 @@ function PaginaCaja() {
                 <button onClick={() => setNuevoTipo("ingreso")} className={`flex-1 py-2 rounded-lg text-sm font-medium ${nuevoTipo === "ingreso" ? "bg-emerald-600 text-white" : "bg-slate-100 dark:bg-neutral-900 text-slate-600 dark:text-white"}`}>Entrada</button>
                 <button onClick={() => setNuevoTipo("gasto")} className={`flex-1 py-2 rounded-lg text-sm font-medium ${nuevoTipo === "gasto" ? "bg-rose-600 text-white" : "bg-slate-100 dark:bg-neutral-900 text-slate-600 dark:text-white"}`}>Salida</button>
               </div>
+              {nuevoTipo === "gasto" && (
+                <div className="mb-3">
+                  <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">¿De dónde sale el dinero?</label>
+                  <div className="flex gap-2">
+                    <button onClick={() => setFuenteGasto("caja")} className={`flex-1 py-2 rounded-lg text-sm font-medium ${fuenteGasto === "caja" ? "bg-[#16233D] text-white" : "bg-slate-100 dark:bg-neutral-900 text-slate-600 dark:text-white"}`}>💵 Caja</button>
+                    <button onClick={() => setFuenteGasto("guardado")} className={`flex-1 py-2 rounded-lg text-sm font-medium ${fuenteGasto === "guardado" ? "bg-amber-500 text-[#16233D]" : "bg-slate-100 dark:bg-neutral-900 text-slate-600 dark:text-white"}`}>💰 Guardado</button>
+                  </div>
+                </div>
+              )}
               <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Descripción</label>
               <input value={nuevaDescripcion} onChange={(e) => setNuevaDescripcion(e.target.value)} placeholder="Ej: Venta del día, compra de bolsas..."
                 className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm mb-3 outline-none focus:border-[#E3A73B]" />
