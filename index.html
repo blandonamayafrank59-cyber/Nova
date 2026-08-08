@@ -458,6 +458,31 @@ const supaApi = {
     const res = await peticionApi(`${SUPABASE_URL}/rest/v1/lotes?id=eq.${id}`, { method: "DELETE" });
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo eliminar el lote"); }
   },
+
+  // --- Entradas de inventario (historial de movimientos de stock por producto) ---
+  async listarEntradasInventario(productoId) {
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/entradas_inventario?producto_id=eq.${productoId}&select=*&order=fecha.desc,creado_en.desc`);
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudieron cargar las entradas de inventario"); }
+    return res.json();
+  },
+  async crearEntradaInventario(entrada) {
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/entradas_inventario`, {
+      method: "POST", extraHeaders: { Prefer: "return=representation" }, body: JSON.stringify(entrada),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo registrar la entrada"); }
+    return res.json();
+  },
+  async actualizarEntradaInventario(id, cambios) {
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/entradas_inventario?id=eq.${id}`, {
+      method: "PATCH", extraHeaders: { Prefer: "return=representation" }, body: JSON.stringify(cambios),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo actualizar la entrada"); }
+    return res.json();
+  },
+  async eliminarEntradaInventario(id) {
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/entradas_inventario?id=eq.${id}`, { method: "DELETE" });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo eliminar la entrada"); }
+  },
 };
 
 // ============ ICONOS SIMPLES (sin librería externa) ============
@@ -2326,7 +2351,153 @@ function ModalAccionesProducto({ producto, onEditar, onEliminar, onCerrar }) {
   );
 }
 
-function ModalProducto({ abierto, producto, onGuardar, onCerrar, guardando }) {
+const TIPO_ENTRADA_LABEL = { stock_anterior: "Stock anterior", compra: "Nueva compra", ajuste: "Ajuste" };
+
+function SeccionEntradasInventario({ producto, onActualizarProducto, onRecargarProductos }) {
+  const [entradas, setEntradas] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [cantidadActual, setCantidadActual] = useState(producto.cantidad);
+  const [cantidad, setCantidad] = useState("");
+  const [tipo, setTipo] = useState("compra");
+  const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0, 10));
+  const [nota, setNota] = useState("");
+  const [guardando, setGuardando] = useState(false);
+  const [entradaEditando, setEntradaEditando] = useState(null);
+
+  const cargar = useCallback(async () => {
+    try {
+      const datos = await supaApi.listarEntradasInventario(producto.id);
+      setEntradas(datos);
+    } catch (e) { /* silencioso, no bloquea el resto del formulario */ }
+    finally { setCargando(false); }
+  }, [producto.id]);
+
+  useEffect(() => { setCantidadActual(producto.cantidad); cargar(); }, [producto.id]);
+
+  const agregarEntrada = async () => {
+    const cant = parseFloat(cantidad);
+    if (isNaN(cant) || cant === 0) { alert("Escribí una cantidad distinta de 0."); return; }
+    setGuardando(true);
+    try {
+      await supaApi.crearEntradaInventario({ producto_id: producto.id, cantidad: cant, tipo, fecha, nota: nota.trim() || null });
+      const nuevoStock = Math.max(0, cantidadActual + cant);
+      await onActualizarProducto(producto.id, { cantidad: nuevoStock });
+      setCantidadActual(nuevoStock);
+      setCantidad(""); setNota(""); setTipo("compra"); setFecha(new Date().toISOString().slice(0, 10));
+      await cargar();
+      await onRecargarProductos();
+    } catch (e) { alert(e.message); }
+    finally { setGuardando(false); }
+  };
+
+  const guardarEdicion = async (form) => {
+    const nuevaCant = parseFloat(form.cantidad);
+    if (isNaN(nuevaCant) || nuevaCant === 0) { alert("Escribí una cantidad distinta de 0."); return; }
+    setGuardando(true);
+    try {
+      const delta = nuevaCant - entradaEditando.cantidad;
+      await supaApi.actualizarEntradaInventario(entradaEditando.id, { cantidad: nuevaCant, tipo: form.tipo, fecha: form.fecha, nota: form.nota.trim() || null });
+      const nuevoStock = Math.max(0, cantidadActual + delta);
+      await onActualizarProducto(producto.id, { cantidad: nuevoStock });
+      setCantidadActual(nuevoStock);
+      setEntradaEditando(null);
+      await cargar();
+      await onRecargarProductos();
+    } catch (e) { alert(e.message); }
+    finally { setGuardando(false); }
+  };
+
+  const eliminarEntrada = async (e) => {
+    if (!confirm(`¿Eliminar esta entrada de ${e.cantidad > 0 ? "+" : ""}${e.cantidad}? El stock se recalcula solo.`)) return;
+    setGuardando(true);
+    try {
+      await supaApi.eliminarEntradaInventario(e.id);
+      const nuevoStock = Math.max(0, cantidadActual - e.cantidad);
+      await onActualizarProducto(producto.id, { cantidad: nuevoStock });
+      setCantidadActual(nuevoStock);
+      await cargar();
+      await onRecargarProductos();
+    } catch (err) { alert(err.message); }
+    finally { setGuardando(false); }
+  };
+
+  return (
+    <div className="border-t border-slate-100 dark:border-white/10 pt-4 mt-1">
+      <h3 className="text-xs font-semibold text-slate-500 dark:text-white uppercase tracking-wide mb-1">Entradas de stock</h3>
+      <p className="text-sm text-slate-700 dark:text-white mb-3">Stock actual: <b className="font-mono">{cantidadActual}</b> unidades</p>
+
+      <div className="grid grid-cols-2 gap-2 mb-2">
+        <input type="number" value={cantidad} onChange={(e) => setCantidad(e.target.value)} placeholder="Cantidad (+6 o -2)"
+          className="px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
+        <select value={tipo} onChange={(e) => setTipo(e.target.value)}
+          className="px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]">
+          {Object.keys(TIPO_ENTRADA_LABEL).map(t => <option key={t} value={t}>{TIPO_ENTRADA_LABEL[t]}</option>)}
+        </select>
+        <input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)}
+          className="px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
+        <input value={nota} onChange={(e) => setNota(e.target.value)} placeholder="Nota (opcional)"
+          className="px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
+      </div>
+      <button disabled={guardando} onClick={agregarEntrada} className="w-full bg-[#16233D] text-white text-sm font-semibold py-2 rounded-lg disabled:opacity-50 flex items-center justify-center gap-2 mb-3">
+        {guardando && <IconLoading />} + Agregar entrada
+      </button>
+
+      <div className="space-y-1.5 max-h-40 overflow-y-auto">
+        {cargando ? (
+          <p className="text-xs text-slate-400 py-2">Cargando...</p>
+        ) : entradas.length === 0 ? (
+          <p className="text-xs text-slate-400 py-2">Todavía no hay entradas registradas para este producto.</p>
+        ) : entradas.map(e => (
+          <div key={e.id} className="flex items-center justify-between bg-slate-50 dark:bg-neutral-900 rounded-lg px-3 py-2 text-xs">
+            <div className="min-w-0">
+              <div className="text-slate-700 dark:text-white font-medium">{TIPO_ENTRADA_LABEL[e.tipo] || e.tipo} · <span className={e.cantidad >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}>{e.cantidad > 0 ? "+" : ""}{e.cantidad}</span></div>
+              <div className="text-slate-400 truncate">{e.fecha}{e.nota ? ` · ${e.nota}` : ""}</div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button onClick={() => setEntradaEditando(e)} className="px-2 py-1 rounded border border-slate-200 dark:border-white/20 text-slate-600 dark:text-white">Editar</button>
+              <button onClick={() => eliminarEntrada(e)} className="text-slate-400 hover:text-rose-500">🗑️</button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {entradaEditando && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={() => setEntradaEditando(null)}>
+          <ModalEditarEntrada entrada={entradaEditando} guardando={guardando} onGuardar={guardarEdicion} onCerrar={() => setEntradaEditando(null)} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ModalEditarEntrada({ entrada, onGuardar, onCerrar, guardando }) {
+  const [form, setForm] = useState({ cantidad: entrada.cantidad, tipo: entrada.tipo, fecha: entrada.fecha, nota: entrada.nota || "" });
+  return (
+    <div onClick={(e) => e.stopPropagation()} className="bg-white dark:bg-black rounded-2xl p-6 w-full max-w-sm">
+      <h2 className="font-semibold text-slate-800 dark:text-white mb-4 font-display">Editar entrada</h2>
+      <div className="grid grid-cols-2 gap-2 mb-4">
+        <input type="number" value={form.cantidad} onChange={(e) => setForm({ ...form, cantidad: e.target.value })}
+          className="px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm outline-none focus:border-[#E3A73B]" />
+        <select value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })}
+          className="px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm outline-none focus:border-[#E3A73B]">
+          {Object.keys(TIPO_ENTRADA_LABEL).map(t => <option key={t} value={t}>{TIPO_ENTRADA_LABEL[t]}</option>)}
+        </select>
+        <input type="date" value={form.fecha} onChange={(e) => setForm({ ...form, fecha: e.target.value })}
+          className="px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm outline-none focus:border-[#E3A73B]" />
+        <input value={form.nota} onChange={(e) => setForm({ ...form, nota: e.target.value })} placeholder="Nota (opcional)"
+          className="px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm outline-none focus:border-[#E3A73B]" />
+      </div>
+      <div className="flex gap-2">
+        <button onClick={onCerrar} className="flex-1 px-3 py-2.5 rounded-lg text-sm font-medium border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white">Cancelar</button>
+        <button disabled={guardando} onClick={() => onGuardar({ ...form, cantidad: parseFloat(form.cantidad) })} className="flex-1 px-3 py-2.5 rounded-lg text-sm font-semibold bg-[#E3A73B] text-[#16233D] disabled:opacity-50 flex items-center justify-center gap-2">
+          {guardando && <IconLoading />} Guardar
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ModalProducto({ abierto, producto, onGuardar, onCerrar, guardando, onActualizarProducto, onRecargarProductos }) {
   const [form, setForm] = useState({ nombre: "", categoria: "", costo: "", venta: "", cantidad: "", minimo: "" });
 
   useEffect(() => {
@@ -2366,19 +2537,15 @@ function ModalProducto({ abierto, producto, onGuardar, onCerrar, guardando }) {
               />
             </div>
           ))}
-          {producto && (
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Cantidad en stock</label>
-              <div className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-neutral-900 text-sm text-slate-500 dark:text-white/60">
-                {producto.cantidad} unidades
-              </div>
-              <p className="text-[11px] text-slate-400 dark:text-white/40 mt-1">El stock se actualiza solo con ventas, pérdidas, fiados o consumo del hogar — no se edita aquí.</p>
-            </div>
-          )}
           <div className="bg-slate-50 dark:bg-neutral-900 rounded-lg p-3 text-xs text-slate-500 dark:text-white">
             Ganancia: <b className="text-emerald-600 dark:text-emerald-400">C${ganancia.toFixed(2)}</b> · Margen: <b className="text-emerald-600 dark:text-emerald-400">{margen}%</b>
           </div>
         </div>
+
+        {producto && (
+          <SeccionEntradasInventario producto={producto} onActualizarProducto={onActualizarProducto} onRecargarProductos={onRecargarProductos} />
+        )}
+
         <div className="flex gap-2 justify-end mt-5">
           <button onClick={onCerrar} className="px-4 py-2 rounded-lg text-sm font-medium border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white">Cancelar</button>
           <button disabled={guardando || !form.nombre.trim()} onClick={() => onGuardar(form)} className="px-4 py-2 rounded-lg text-sm font-semibold bg-[#E3A73B] text-[#16233D] disabled:opacity-50 flex items-center gap-2">
@@ -2522,7 +2689,7 @@ function PaginaInventario({ productos, cargando, error, onRecargar, onCrear, onA
         onEditar={() => { abrirEditar(productoMenu); setProductoMenu(null); }}
         onEliminar={() => { if (confirm(`¿Eliminar ${productoMenu.nombre}?`)) onEliminar(productoMenu.id); setProductoMenu(null); }}
         onCerrar={() => setProductoMenu(null)} />
-      <ModalProducto abierto={modalAbierto} producto={productoEditando} onGuardar={guardar} onCerrar={() => setModalAbierto(false)} guardando={guardando} />
+      <ModalProducto abierto={modalAbierto} producto={productoEditando} onGuardar={guardar} onCerrar={() => setModalAbierto(false)} guardando={guardando} onActualizarProducto={onActualizar} onRecargarProductos={onRecargar} />
     </div>
   );
 }
