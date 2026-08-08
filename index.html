@@ -181,12 +181,10 @@ const supaApi = {
     return datos[0] || null;
   },
   async abrirCaja(montoInicial, fechaApertura) {
-    const body = { monto_inicial: montoInicial, estado: "abierta" };
-    if (fechaApertura) body.fecha_apertura = new Date(fechaApertura + "T00:00:00").toISOString();
     const res = await peticionApi(`${SUPABASE_URL}/rest/v1/caja_sesiones`, {
       method: "POST",
       extraHeaders: { Prefer: "return=representation" },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ monto_inicial: montoInicial, estado: "abierta", fecha_apertura: fechaApertura }),
     });
     if (!res.ok) throw new Error("No se pudo abrir la caja");
     return res.json();
@@ -854,9 +852,18 @@ function ModalNuevoFiado({ abierto, clientes, productos, onGuardar, onCerrar, gu
   const [cantidadSel, setCantidadSel] = useState("1");
   const [busquedaProducto, setBusquedaProducto] = useState("");
   const [listaAbierta, setListaAbierta] = useState(false);
+  const [modoRapido, setModoRapido] = useState(false);
+  const [textoRapido, setTextoRapido] = useState("");
+  const [escuchando, setEscuchando] = useState(false);
+  const [noResueltos, setNoResueltos] = useState([]);
+  const reconocedorRef = React.useRef(null);
+  const soportaVoz = typeof window !== "undefined" && (window.SpeechRecognition || window.webkitSpeechRecognition);
 
   useEffect(() => {
-    if (abierto) { setClienteId(""); setItems([]); setProductoSel(null); setCantidadSel("1"); setBusquedaProducto(""); setListaAbierta(false); }
+    if (abierto) {
+      setClienteId(""); setItems([]); setProductoSel(null); setCantidadSel("1"); setBusquedaProducto(""); setListaAbierta(false);
+      setModoRapido(false); setTextoRapido(""); setNoResueltos([]); setEscuchando(false);
+    }
   }, [abierto]);
 
   if (!abierto) return null;
@@ -869,23 +876,147 @@ function ModalNuevoFiado({ abierto, clientes, productos, onGuardar, onCerrar, gu
     setListaAbierta(false);
   };
 
+  const agregarProductoALista = (producto, cant) => {
+    const yaEnCarrito = items.reduce((a, it) => a + (it.producto_id === producto.id ? it.cantidad : 0), 0);
+    if (cant + yaEnCarrito > producto.cantidad) return false;
+    setItems(prev => [...prev, { producto_id: producto.id, nombre: producto.nombre, cantidad: cant, precio_unitario: producto.venta }]);
+    return true;
+  };
+
   const agregarItem = () => {
     const producto = productoSel;
     const cant = parseFloat(cantidadSel) || 0;
     if (!producto || cant <= 0) return;
-    const yaEnCarrito = items.reduce((a, it) => a + (it.producto_id === producto.id ? it.cantidad : 0), 0);
-    if (cant + yaEnCarrito > producto.cantidad) { alert(`Solo hay ${producto.cantidad} unidades de ${producto.nombre} en stock.`); return; }
-    setItems([...items, { producto_id: producto.id, nombre: producto.nombre, cantidad: cant, precio_unitario: producto.venta }]);
+    const ok = agregarProductoALista(producto, cant);
+    if (!ok) { alert(`Solo hay ${producto.cantidad} unidades de ${producto.nombre} en stock.`); return; }
     setProductoSel(null); setCantidadSel("1"); setBusquedaProducto("");
   };
 
   const quitarItem = (i) => setItems(items.filter((_, idx) => idx !== i));
   const total = items.reduce((a, it) => a + it.cantidad * it.precio_unitario, 0);
 
+  const toggleMicrofono = () => {
+    if (!soportaVoz) return;
+    if (escuchando) { reconocedorRef.current && reconocedorRef.current.stop(); return; }
+    const Reconocedor = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const r = new Reconocedor();
+    r.lang = "es-NI";
+    r.continuous = true;
+    r.interimResults = false;
+    r.onresult = (ev) => {
+      let textoNuevo = "";
+      for (let i = ev.resultIndex; i < ev.results.length; i++) {
+        if (ev.results[i].isFinal) textoNuevo += ev.results[i][0].transcript + ". ";
+      }
+      if (textoNuevo) setTextoRapido(prev => (prev ? prev + "\n" : "") + textoNuevo.trim());
+    };
+    r.onend = () => setEscuchando(false);
+    r.onerror = () => setEscuchando(false);
+    reconocedorRef.current = r;
+    r.start();
+    setEscuchando(true);
+  };
+
+  const buscarProductoParecido = (nombreCrudo) => {
+    const q = nombreCrudo.toLowerCase().trim();
+    if (!q) return null;
+    const candidatos = productos.filter(p => p.nombre.toLowerCase().includes(q) || q.includes(p.nombre.toLowerCase()));
+    if (candidatos.length === 0) return null;
+    candidatos.sort((a, b) => Math.abs(a.nombre.length - q.length) - Math.abs(b.nombre.length - q.length));
+    return candidatos[0];
+  };
+
+  const interpretarTexto = () => {
+    // Separar por líneas y también por comas, para que sirva tanto escrito como dictado de corrido
+    const partes = textoRapido.split(/\n|,|\.(?!\d)/).map(s => s.trim()).filter(Boolean);
+    if (partes.length === 0) return;
+
+    let resto = partes;
+    // Intentar reconocer el nombre del cliente en la primera línea
+    if (!clienteId) {
+      const primera = partes[0].toLowerCase();
+      const clienteEncontrado = clientes.find(c => primera.includes(c.nombre.toLowerCase()) || c.nombre.toLowerCase().includes(primera));
+      if (clienteEncontrado) {
+        setClienteId(clienteEncontrado.id);
+        resto = partes.slice(1);
+      }
+    }
+
+    const sinResolver = [];
+    resto.forEach(linea => {
+      const m = linea.match(/^(.*?)(?:\s+x\s*|\s+)(\d+(?:[.,]\d+)?)\s*$/i);
+      const nombreCrudo = m ? m[1].trim() : linea;
+      const cantidad = m ? parseFloat(m[2].replace(",", ".")) : 1;
+      if (!nombreCrudo) return;
+      const producto = buscarProductoParecido(nombreCrudo);
+      if (producto) {
+        const ok = agregarProductoALista(producto, cantidad);
+        if (!ok) sinResolver.push({ texto: linea, nombreCrudo, cantidad });
+      } else {
+        sinResolver.push({ texto: linea, nombreCrudo, cantidad });
+      }
+    });
+    setNoResueltos(sinResolver);
+    setTextoRapido("");
+  };
+
+  const resolverManual = (i, producto) => {
+    const item = noResueltos[i];
+    const ok = agregarProductoALista(producto, item.cantidad);
+    if (!ok) { alert(`Solo hay ${producto.cantidad} unidades de ${producto.nombre} en stock.`); return; }
+    setNoResueltos(noResueltos.filter((_, idx) => idx !== i));
+  };
+
+  const descartarNoResuelto = (i) => setNoResueltos(noResueltos.filter((_, idx) => idx !== i));
+
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-40">
       <div className="bg-white dark:bg-black rounded-2xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
         <h2 className="font-semibold text-slate-800 dark:text-white mb-4 font-display">Registrar fiado</h2>
+
+        <button onClick={() => setModoRapido(!modoRapido)} className="text-xs font-semibold text-[#16233D] dark:text-[#E3A73B] mb-3 underline">
+          {modoRapido ? "← Volver a la forma normal" : "🎤 Dictar o escribir todo de un jalón"}
+        </button>
+
+        {modoRapido && (
+          <div className="bg-slate-50 dark:bg-neutral-900 rounded-lg p-3 mb-4">
+            <p className="text-xs text-slate-500 dark:text-white/60 mb-2">Ej: "María López, arroz x2, aceite x1, jabón x3" — por voz o escrito.</p>
+            <textarea value={textoRapido} onChange={(e) => setTextoRapido(e.target.value)} rows={3} placeholder="Escribí o dictá aquí..."
+              className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B] mb-2" />
+            <div className="flex gap-2">
+              {soportaVoz && (
+                <button onClick={toggleMicrofono} className={`px-4 py-2 rounded-lg text-sm font-semibold ${escuchando ? "bg-rose-500 text-white animate-pulse" : "bg-[#16233D] text-white"}`}>
+                  {escuchando ? "🔴 Escuchando... (tocá para parar)" : "🎤 Hablar"}
+                </button>
+              )}
+              <button onClick={interpretarTexto} disabled={!textoRapido.trim()} className="flex-1 px-4 py-2 rounded-lg text-sm font-semibold bg-[#E3A73B] text-[#16233D] disabled:opacity-50">
+                Interpretar
+              </button>
+            </div>
+            {!soportaVoz && <p className="text-[11px] text-slate-400 mt-2">Tu navegador no soporta dictado por voz aquí, pero podés escribirlo igual.</p>}
+          </div>
+        )}
+
+        {noResueltos.length > 0 && (
+          <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-900/30 rounded-lg p-3 mb-4">
+            <p className="text-xs font-semibold text-amber-700 dark:text-amber-400 mb-2">⚠️ No identifiqué estos — elegí el producto correcto:</p>
+            <div className="space-y-2">
+              {noResueltos.map((item, i) => (
+                <div key={i} className="bg-white dark:bg-black rounded-lg p-2">
+                  <div className="text-xs text-slate-600 dark:text-white/70 mb-1.5">"{item.texto}"</div>
+                  <div className="flex gap-1.5">
+                    <select onChange={(e) => { const p = productos.find(pr => pr.id === e.target.value); if (p) resolverManual(i, p); }} defaultValue=""
+                      className="flex-1 min-w-0 px-2 py-1.5 rounded border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-xs text-slate-700 dark:text-white outline-none">
+                      <option value="" disabled>Elegir producto...</option>
+                      {productos.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                    </select>
+                    <button onClick={() => descartarNoResuelto(i)} className="text-rose-500 text-xs px-2">Descartar</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Cliente</label>
         <select value={clienteId} onChange={(e) => setClienteId(e.target.value)}
@@ -1673,10 +1804,7 @@ function PaginaCaja() {
   const [error, setError] = useState(null);
   const [montoApertura, setMontoApertura] = useState("");
   const [fechaApertura, setFechaApertura] = useState(() => new Date().toISOString().slice(0, 10));
-  const [editandoGuardado, setEditandoGuardado] = useState(false);
-  const [montoGuardadoEditar, setMontoGuardadoEditar] = useState("");
   const [nuevoTipo, setNuevoTipo] = useState("ingreso");
-  const [fuenteGasto, setFuenteGasto] = useState("caja");
   const [nuevaDescripcion, setNuevaDescripcion] = useState("");
   const [nuevoMonto, setNuevoMonto] = useState("");
   const [procesando, setProcesando] = useState(false);
@@ -1759,62 +1887,21 @@ function PaginaCaja() {
 
   const abrirCaja = async () => {
     const monto = parseFloat(montoApertura) || 0;
-    if (monto > saldoGuardado) { alert(`No hay suficiente dinero guardado para abrir con ese monto. Guardado actual: C$${saldoGuardado.toFixed(2)}`); return; }
     setProcesando(true);
     try {
-      await supaApi.abrirCaja(monto, fechaApertura);
-      if (monto > 0) {
-        await supaApi.crearMovimientoGuardado({ tipo: "ingreso", monto, descripcion: `Apertura de caja (${fechaApertura})` });
-      }
+      await supaApi.abrirCaja(monto);
       setMontoApertura("");
-      setFechaApertura(new Date().toISOString().slice(0, 10));
       await cargarTodo();
     } catch (e) { alert(e.message); }
     finally { setProcesando(false); }
   };
 
-  const guardarEdicionGuardado = async () => {
-    const nuevo = parseFloat(montoGuardadoEditar);
-    if (isNaN(nuevo) || nuevo < 0) { alert("Poné un monto válido."); return; }
-    const diferencia = nuevo - saldoGuardado;
-    if (Math.abs(diferencia) < 0.005) { setEditandoGuardado(false); return; }
-    setProcesandoGuardado(true);
-    try {
-      if (diferencia > 0) {
-        await supaApi.crearMovimientoGuardado({ tipo: "retiro", monto: diferencia, descripcion: "Ajuste manual (aumento)" });
-      } else {
-        await supaApi.crearMovimientoGuardado({ tipo: "ingreso", monto: Math.abs(diferencia), descripcion: "Ajuste manual (disminución)" });
-      }
-      setEditandoGuardado(false);
-      await cargarTodo();
-    } catch (e) { alert(e.message); }
-    finally { setProcesandoGuardado(false); }
-  };
-
-  const borrarDineroGuardado = async () => {
-    if (saldoGuardado <= 0) { setPanelAbierto(null); return; }
-    if (!confirm(`¿Poner en cero el dinero guardado? Se registrará un ajuste de -C$${saldoGuardado.toFixed(2)} en el historial. Esta acción no se puede deshacer.`)) return;
-    setProcesandoGuardado(true);
-    try {
-      await supaApi.crearMovimientoGuardado({ tipo: "ingreso", monto: saldoGuardado, descripcion: "Ajuste manual (vaciado)" });
-      setPanelAbierto(null);
-      await cargarTodo();
-    } catch (e) { alert(e.message); }
-    finally { setProcesandoGuardado(false); }
-  };
-
   const registrarMovimiento = async () => {
     const monto = parseFloat(nuevoMonto) || 0;
     if (monto <= 0) { alert("Poné un monto mayor a 0"); return; }
-    const esGastoDesdeGuardado = nuevoTipo === "gasto" && fuenteGasto === "guardado";
-    if (esGastoDesdeGuardado && monto > saldoGuardado) { alert(`No hay suficiente dinero guardado. Guardado actual: C$${saldoGuardado.toFixed(2)}`); return; }
     setProcesando(true);
     try {
-      if (esGastoDesdeGuardado) {
-        await supaApi.crearMovimientoGuardado({ tipo: "ingreso", monto, descripcion: nuevaDescripcion.trim() || "Gasto pagado con dinero guardado" });
-      } else {
-        await supaApi.crearMovimiento({ sesion_id: sesion.id, tipo: nuevoTipo, descripcion: nuevaDescripcion.trim(), monto });
-      }
+      await supaApi.crearMovimiento({ sesion_id: sesion.id, tipo: nuevoTipo, descripcion: nuevaDescripcion.trim(), monto });
       setNuevaDescripcion(""); setNuevoMonto("");
       await cargarTodo();
     } catch (e) { alert(e.message); }
@@ -1892,11 +1979,7 @@ function PaginaCaja() {
       {!sesion ? (
         <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl p-6 max-w-sm">
           <h2 className="font-semibold text-slate-800 dark:text-white mb-3">Abrir caja</h2>
-          <p className="text-xs text-slate-400 dark:text-white/40 mb-3">Dinero guardado disponible: <b className="text-amber-600 dark:text-amber-400">C${saldoGuardado.toFixed(2)}</b></p>
-          <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Fecha de apertura</label>
-          <input type="date" value={fechaApertura} onChange={(e) => setFechaApertura(e.target.value)}
-            className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm mb-3 outline-none focus:border-[#E3A73B]" />
-          <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Monto inicial (se descuenta del dinero guardado)</label>
+          <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Monto inicial (efectivo con el que abrís)</label>
           <input type="number" value={montoApertura} onChange={(e) => setMontoApertura(e.target.value)}
             className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm mb-3 outline-none focus:border-[#E3A73B]" placeholder="0" />
           <button disabled={procesando} onClick={abrirCaja} className="w-full bg-[#E3A73B] text-[#16233D] font-semibold text-sm px-4 py-2 rounded-lg disabled:opacity-50 flex items-center justify-center gap-2">
@@ -1936,15 +2019,6 @@ function PaginaCaja() {
                 <button onClick={() => setNuevoTipo("ingreso")} className={`flex-1 py-2 rounded-lg text-sm font-medium ${nuevoTipo === "ingreso" ? "bg-emerald-600 text-white" : "bg-slate-100 dark:bg-neutral-900 text-slate-600 dark:text-white"}`}>Entrada</button>
                 <button onClick={() => setNuevoTipo("gasto")} className={`flex-1 py-2 rounded-lg text-sm font-medium ${nuevoTipo === "gasto" ? "bg-rose-600 text-white" : "bg-slate-100 dark:bg-neutral-900 text-slate-600 dark:text-white"}`}>Salida</button>
               </div>
-              {nuevoTipo === "gasto" && (
-                <div className="mb-3">
-                  <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">¿De dónde sale el dinero?</label>
-                  <div className="flex gap-2">
-                    <button onClick={() => setFuenteGasto("caja")} className={`flex-1 py-2 rounded-lg text-sm font-medium ${fuenteGasto === "caja" ? "bg-[#16233D] text-white" : "bg-slate-100 dark:bg-neutral-900 text-slate-600 dark:text-white"}`}>💵 Caja</button>
-                    <button onClick={() => setFuenteGasto("guardado")} className={`flex-1 py-2 rounded-lg text-sm font-medium ${fuenteGasto === "guardado" ? "bg-amber-500 text-[#16233D]" : "bg-slate-100 dark:bg-neutral-900 text-slate-600 dark:text-white"}`}>💰 Guardado</button>
-                  </div>
-                </div>
-              )}
               <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Descripción</label>
               <input value={nuevaDescripcion} onChange={(e) => setNuevaDescripcion(e.target.value)} placeholder="Ej: Venta del día, compra de bolsas..."
                 className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm mb-3 outline-none focus:border-[#E3A73B]" />
@@ -2112,35 +2186,51 @@ function PaginaCaja() {
       )}
 
       {panelAbierto === "guardado" && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-40" onClick={() => { setPanelAbierto(null); setEditandoGuardado(false); }}>
-          <div onClick={(e) => e.stopPropagation()} className="bg-white dark:bg-black rounded-2xl p-6 w-full max-w-sm">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-40" onClick={() => setPanelAbierto(null)}>
+          <div onClick={(e) => e.stopPropagation()} className="bg-white dark:bg-black rounded-2xl p-6 w-full max-w-md max-h-[85vh] overflow-y-auto">
             <h2 className="font-semibold text-slate-800 dark:text-white mb-1 font-display">Dinero guardado</h2>
+            <p className="text-xs text-slate-400 dark:text-white/40 mb-4">Actual: <b className="text-amber-600 dark:text-amber-400">C${saldoGuardado.toFixed(2)}</b></p>
 
-            {!editandoGuardado ? (
-              <>
-                <p className="text-xs text-slate-400 dark:text-white/40 mb-1">Monto actual</p>
-                <p className="text-2xl font-mono font-bold text-amber-600 dark:text-amber-400 mb-5">C${saldoGuardado.toFixed(2)}</p>
-                <div className="flex gap-2">
-                  <button onClick={() => { setMontoGuardadoEditar(String(saldoGuardado)); setEditandoGuardado(true); }} className="flex-1 px-3 py-2.5 rounded-lg text-sm font-medium border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white">Editar</button>
-                  <button disabled={procesandoGuardado} onClick={borrarDineroGuardado} className="flex-1 px-3 py-2.5 rounded-lg text-sm font-semibold border border-rose-300 dark:border-rose-800 text-rose-600 dark:text-rose-400 disabled:opacity-50 flex items-center justify-center gap-2">
-                    {procesandoGuardado && <IconLoading />} Borrar
-                  </button>
+            {sesion ? (
+              <div className="mb-4">
+                <div className="flex gap-2 mb-3">
+                  <button onClick={() => setTipoGuardado("retiro")} className={`flex-1 py-2 rounded-lg text-sm font-medium ${tipoGuardado === "retiro" ? "bg-amber-500 text-[#16233D]" : "bg-slate-100 dark:bg-neutral-900 text-slate-600 dark:text-white"}`}>📥 Retirar de la caja</button>
+                  <button onClick={() => setTipoGuardado("ingreso")} className={`flex-1 py-2 rounded-lg text-sm font-medium ${tipoGuardado === "ingreso" ? "bg-amber-500 text-[#16233D]" : "bg-slate-100 dark:bg-neutral-900 text-slate-600 dark:text-white"}`}>📤 Meter a la caja</button>
                 </div>
-                <button onClick={() => setPanelAbierto(null)} className="w-full mt-4 px-3 py-2.5 rounded-lg text-sm font-medium border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white">Cerrar</button>
-              </>
+                <div className="grid sm:grid-cols-2 gap-2 mb-3">
+                  <input type="number" value={montoGuardado} onChange={(e) => setMontoGuardado(e.target.value)} placeholder="Monto"
+                    className="px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm outline-none focus:border-[#E3A73B]" />
+                  <input value={descGuardado} onChange={(e) => setDescGuardado(e.target.value)} placeholder="Descripción (opcional)"
+                    className="px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm outline-none focus:border-[#E3A73B]" />
+                </div>
+                <button disabled={procesandoGuardado} onClick={moverDineroGuardado} className="w-full bg-amber-500 text-[#16233D] font-semibold text-sm px-4 py-2 rounded-lg disabled:opacity-50 flex items-center justify-center gap-2">
+                  {procesandoGuardado && <IconLoading />} Registrar movimiento
+                </button>
+              </div>
             ) : (
-              <>
-                <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1 mt-3">Nuevo monto</label>
-                <input type="number" value={montoGuardadoEditar} onChange={(e) => setMontoGuardadoEditar(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm mb-4 outline-none focus:border-[#E3A73B]" />
-                <div className="flex gap-2">
-                  <button onClick={() => setEditandoGuardado(false)} className="flex-1 px-3 py-2.5 rounded-lg text-sm font-medium border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white">Cancelar</button>
-                  <button disabled={procesandoGuardado} onClick={guardarEdicionGuardado} className="flex-1 px-3 py-2.5 rounded-lg text-sm font-semibold bg-[#E3A73B] text-[#16233D] disabled:opacity-50 flex items-center justify-center gap-2">
-                    {procesandoGuardado && <IconLoading />} Guardar
-                  </button>
-                </div>
-              </>
+              <p className="text-xs text-slate-400 dark:text-white/40 mb-4">Abrí la caja para poder mover dinero hacia o desde guardado.</p>
             )}
+
+            <div className="space-y-1.5 border-t border-slate-100 dark:border-white/10 pt-3">
+              {movsGuardado.map(m => (
+                <div key={m.id} className="flex items-center justify-between text-sm py-1">
+                  <div className="min-w-0">
+                    <div className="text-slate-700 dark:text-white truncate">{m.tipo === "retiro" ? "📥" : "📤"} {m.descripcion || (m.tipo === "retiro" ? "Retiro hacia guardado" : "Ingreso desde guardado")}</div>
+                    <div className="text-xs text-slate-400">{new Date(m.creado_en).toLocaleString()}</div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className={`font-mono font-semibold ${m.tipo === "retiro" ? "text-amber-600 dark:text-amber-400" : "text-[#2471A3]"}`}>
+                      {m.tipo === "retiro" ? "+" : "-"}C${Number(m.monto).toFixed(2)}
+                    </span>
+                    <button onClick={() => { setMovimientoEditandoEsGuardado(true); setMovimientoEditando(m); }} className="text-xs px-2 py-1 rounded border border-slate-200 dark:border-white/20 text-slate-600 dark:text-white">Editar</button>
+                    <button onClick={() => eliminarMovimientoGuardado(m)} className="text-slate-400 hover:text-rose-500 text-sm">🗑️</button>
+                  </div>
+                </div>
+              ))}
+              {movsGuardado.length === 0 && <p className="text-sm text-slate-400 py-2 text-center">Sin movimientos todavía.</p>}
+            </div>
+
+            <button onClick={() => setPanelAbierto(null)} className="w-full mt-4 px-3 py-2.5 rounded-lg text-sm font-medium border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white">Cerrar</button>
           </div>
         </div>
       )}
