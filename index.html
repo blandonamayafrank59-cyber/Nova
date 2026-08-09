@@ -879,6 +879,7 @@ function ModalNuevoFiado({ abierto, clientes, productos, clientePreseleccionado,
   const [cantidadExterno, setCantidadExterno] = useState("1");
   const [precioExterno, setPrecioExterno] = useState("");
   const reconocedorRef = React.useRef(null);
+  const detenerManualRef = React.useRef(false);
   const soportaVoz = typeof window !== "undefined" && (window.SpeechRecognition || window.webkitSpeechRecognition);
 
   useEffect(() => {
@@ -926,8 +927,6 @@ function ModalNuevoFiado({ abierto, clientes, productos, clientePreseleccionado,
 
   const quitarItem = (i) => setItems(items.filter((_, idx) => idx !== i));
   const total = items.reduce((a, it) => a + it.cantidad * it.precio_unitario, 0);
-
-  const detenerManualRef = React.useRef(false);
 
   const toggleMicrofono = () => {
     if (!soportaVoz) return;
