@@ -1964,6 +1964,9 @@ function PaginaCaja() {
   const [montoGuardado, setMontoGuardado] = useState("");
   const [descGuardado, setDescGuardado] = useState("");
   const [procesandoGuardado, setProcesandoGuardado] = useState(false);
+  const [montoSaldoGuardado, setMontoSaldoGuardado] = useState("");
+  const [descAjusteGuardado, setDescAjusteGuardado] = useState("");
+  const [procesandoAjusteGuardado, setProcesandoAjusteGuardado] = useState(false);
   const [ventasHoy, setVentasHoy] = useState([]);
   const [mostrarCierre, setMostrarCierre] = useState(false);
   const [montoFinalContado, setMontoFinalContado] = useState("");
@@ -2111,6 +2114,25 @@ function PaginaCaja() {
     if (!confirm("¿Eliminar este movimiento de dinero guardado? Esto no afecta el saldo de la caja, solo corrige el registro de guardado.")) return;
     try { await supaApi.eliminarMovimientoGuardado(m.id); await cargarTodo(); }
     catch (e) { alert(e.message); }
+  };
+
+  // Establece directamente cuánto dinero guardado hay (sin afectar la caja ni las ventas).
+  // Internamente registra la diferencia como un movimiento de guardado normal, pero SIN crear
+  // ningún movimiento de caja (a diferencia de moverDineroGuardado), por lo que no cuenta como
+  // entrada ni salida de caja.
+  const guardarSaldoGuardado = async () => {
+    const nuevo = parseFloat(montoSaldoGuardado);
+    if (isNaN(nuevo) || nuevo < 0) { alert("Poné un monto válido (0 o mayor)."); return; }
+    const delta = Math.round((nuevo - saldoGuardado) * 100) / 100;
+    if (delta === 0) { setMontoSaldoGuardado(""); setDescAjusteGuardado(""); return; }
+    setProcesandoAjusteGuardado(true);
+    try {
+      const desc = descAjusteGuardado.trim() || "Ajuste manual de saldo guardado";
+      await supaApi.crearMovimientoGuardado({ tipo: delta > 0 ? "retiro" : "ingreso", monto: Math.abs(delta), descripcion: desc });
+      setMontoSaldoGuardado(""); setDescAjusteGuardado("");
+      await cargarTodo();
+    } catch (e) { alert(e.message); }
+    finally { setProcesandoAjusteGuardado(false); }
   };
 
   if (cargando) return <div className="flex items-center justify-center py-16 text-slate-400 gap-2 text-sm"><IconLoading /> Cargando caja...</div>;
@@ -2343,12 +2365,32 @@ function PaginaCaja() {
             <h2 className="font-semibold text-slate-800 dark:text-white mb-1 font-display">Dinero guardado</h2>
             <p className="text-xs text-slate-400 dark:text-white/40 mb-4">Actual: <b className="text-amber-600 dark:text-amber-400">C${saldoGuardado.toFixed(2)}</b></p>
 
-            {sesion ? (
+            <div className="flex gap-2 mb-2">
+              <button onClick={() => setTipoGuardado("retiro")} className={`flex-1 py-2 rounded-lg text-sm font-medium ${tipoGuardado === "retiro" ? "bg-amber-500 text-[#16233D]" : "bg-slate-100 dark:bg-neutral-900 text-slate-600 dark:text-white"}`}>📥 Retirar de la caja</button>
+              <button onClick={() => setTipoGuardado("ingreso")} className={`flex-1 py-2 rounded-lg text-sm font-medium ${tipoGuardado === "ingreso" ? "bg-amber-500 text-[#16233D]" : "bg-slate-100 dark:bg-neutral-900 text-slate-600 dark:text-white"}`}>📤 Meter a la caja</button>
+            </div>
+            <div className="mb-3">
+              <button onClick={() => { setTipoGuardado("editar_saldo"); setMontoSaldoGuardado(saldoGuardado.toFixed(2)); }} className={`w-full py-2 rounded-lg text-sm font-medium ${tipoGuardado === "editar_saldo" ? "bg-amber-500 text-[#16233D]" : "bg-slate-100 dark:bg-neutral-900 text-slate-600 dark:text-white"}`}>✏️ Editar dinero guardado</button>
+            </div>
+
+            {tipoGuardado === "editar_saldo" ? (
               <div className="mb-4">
-                <div className="flex gap-2 mb-3">
-                  <button onClick={() => setTipoGuardado("retiro")} className={`flex-1 py-2 rounded-lg text-sm font-medium ${tipoGuardado === "retiro" ? "bg-amber-500 text-[#16233D]" : "bg-slate-100 dark:bg-neutral-900 text-slate-600 dark:text-white"}`}>📥 Retirar de la caja</button>
-                  <button onClick={() => setTipoGuardado("ingreso")} className={`flex-1 py-2 rounded-lg text-sm font-medium ${tipoGuardado === "ingreso" ? "bg-amber-500 text-[#16233D]" : "bg-slate-100 dark:bg-neutral-900 text-slate-600 dark:text-white"}`}>📤 Meter a la caja</button>
+                <p className="text-xs text-slate-400 dark:text-white/40 mb-3">Establecé directamente cuánto dinero tenés guardado fuera de la caja (por ejemplo, para el saldo inicial). Esto no se registra como entrada ni salida de caja y no afecta las ventas.</p>
+                <div className="grid sm:grid-cols-2 gap-2 mb-3">
+                  <input type="number" value={montoSaldoGuardado} onChange={(e) => setMontoSaldoGuardado(e.target.value)} placeholder="Nuevo saldo guardado"
+                    className="px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm outline-none focus:border-[#E3A73B]" />
+                  <input value={descAjusteGuardado} onChange={(e) => setDescAjusteGuardado(e.target.value)} placeholder="Descripción (opcional)"
+                    className="px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm outline-none focus:border-[#E3A73B]" />
                 </div>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setMontoSaldoGuardado("0")} className="flex-1 py-2 rounded-lg text-sm font-medium border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white">Poner en cero</button>
+                  <button disabled={procesandoAjusteGuardado} onClick={guardarSaldoGuardado} className="flex-1 bg-amber-500 text-[#16233D] font-semibold text-sm px-4 py-2 rounded-lg disabled:opacity-50 flex items-center justify-center gap-2">
+                    {procesandoAjusteGuardado && <IconLoading />} Guardar saldo
+                  </button>
+                </div>
+              </div>
+            ) : sesion ? (
+              <div className="mb-4">
                 <div className="grid sm:grid-cols-2 gap-2 mb-3">
                   <input type="number" value={montoGuardado} onChange={(e) => setMontoGuardado(e.target.value)} placeholder="Monto"
                     className="px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm outline-none focus:border-[#E3A73B]" />
@@ -2360,7 +2402,7 @@ function PaginaCaja() {
                 </button>
               </div>
             ) : (
-              <p className="text-xs text-slate-400 dark:text-white/40 mb-4">Abrí la caja para poder mover dinero hacia o desde guardado.</p>
+              <p className="text-xs text-slate-400 dark:text-white/40 mb-4">Abrí la caja para poder mover dinero hacia o desde guardado. También podés usar "Editar dinero guardado" sin necesidad de abrir la caja.</p>
             )}
 
             <div className="space-y-1.5 border-t border-slate-100 dark:border-white/10 pt-3">
