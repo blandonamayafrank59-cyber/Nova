@@ -981,8 +981,10 @@ function ModalNuevoFiado({ abierto, clientes, productos, clientePreseleccionado,
     let linea = lineaOriginal.toLowerCase().trim();
     let precio = null;
 
-    // 1) Detectar precio: número seguido o precedido de "córdoba(s)", "c$", "peso(s)"
-    const mPrecio = linea.match(/(\d+(?:[.,]\d+)?)\s*(?:c\$|córdobas?|cordobas?|pesos?)\b/i) || linea.match(/(?:c\$|córdobas?|cordobas?|pesos?)\s*(\d+(?:[.,]\d+)?)/i);
+    // 1) Detectar precio con palabra comando "precio", o con "córdoba(s)"/"c$"/"peso(s)"
+    const mPrecioComando = linea.match(/precio\s*(?:de\s*)?(\d+(?:[.,]\d+)?)/i);
+    const mPrecioMoneda = linea.match(/(\d+(?:[.,]\d+)?)\s*(?:c\$|córdobas?|cordobas?|pesos?)\b/i) || linea.match(/(?:c\$|córdobas?|cordobas?|pesos?)\s*(\d+(?:[.,]\d+)?)/i);
+    const mPrecio = mPrecioComando || mPrecioMoneda;
     if (mPrecio) {
       precio = parseFloat(mPrecio[1].replace(",", "."));
       linea = linea.replace(mPrecio[0], " ");
@@ -1005,6 +1007,16 @@ function ModalNuevoFiado({ abierto, clientes, productos, clientePreseleccionado,
     // 3) Quitar palabras de unidad y conectores sueltos ("de")
     PALABRAS_UNIDAD.forEach(u => { linea = linea.replace(new RegExp(`\\b${u}\\b`, "gi"), " "); });
     linea = linea.replace(/^\s*de\s+/i, " ").replace(/\s+x\s*$/i, "");
+
+    // 4) Si todavía no hay precio y queda un número suelto al final, lo tomamos como precio
+    //    (por si dijiste el número sin decir "precio" ni "córdobas")
+    if (precio === null) {
+      const mNumeroFinal = linea.match(/(\d+(?:[.,]\d+)?)\s*$/);
+      if (mNumeroFinal) {
+        precio = parseFloat(mNumeroFinal[1].replace(",", "."));
+        linea = linea.slice(0, mNumeroFinal.index);
+      }
+    }
 
     const nombre = linea.replace(/\s+/g, " ").trim();
     return { nombre, cantidad, precio };
