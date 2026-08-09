@@ -927,9 +927,16 @@ function ModalNuevoFiado({ abierto, clientes, productos, clientePreseleccionado,
   const quitarItem = (i) => setItems(items.filter((_, idx) => idx !== i));
   const total = items.reduce((a, it) => a + it.cantidad * it.precio_unitario, 0);
 
+  const detenerManualRef = React.useRef(false);
+
   const toggleMicrofono = () => {
     if (!soportaVoz) return;
-    if (escuchando) { reconocedorRef.current && reconocedorRef.current.stop(); return; }
+    if (escuchando) { detenerManualRef.current = true; reconocedorRef.current && reconocedorRef.current.stop(); return; }
+    detenerManualRef.current = false;
+    iniciarReconocimiento();
+  };
+
+  const iniciarReconocimiento = () => {
     const Reconocedor = window.SpeechRecognition || window.webkitSpeechRecognition;
     const r = new Reconocedor();
     r.lang = "es-NI";
@@ -942,12 +949,24 @@ function ModalNuevoFiado({ abierto, clientes, productos, clientePreseleccionado,
       }
       if (textoNuevo) setTextoRapido(prev => (prev ? prev + "\n" : "") + textoNuevo.trim());
     };
-    r.onend = () => setEscuchando(false);
-    r.onerror = () => setEscuchando(false);
+    r.onend = () => {
+      // Si se cortó solo (por silencio) y el usuario no lo detuvo a propósito, lo reactivamos
+      if (!detenerManualRef.current) {
+        try { r.start(); return; } catch (e) { /* si falla, seguimos y lo apagamos */ }
+      }
+      setEscuchando(false);
+    };
+    r.onerror = (ev) => {
+      if (ev.error === "no-speech" || ev.error === "aborted") return; // no cortar el ciclo por silencios cortos
+      setEscuchando(false);
+    };
     reconocedorRef.current = r;
     r.start();
     setEscuchando(true);
   };
+
+  const NUMEROS_PALABRA = { un: 1, uno: 1, una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10, media: 0.5, medio: 0.5 };
+  const PALABRAS_UNIDAD = ["libra", "libras", "unidad", "unidades", "unidades de", "kilo", "kilos", "kg", "litro", "litros", "bolsa", "bolsas", "caja", "cajas", "paquete", "paquetes"];
 
   const buscarProductoParecido = (nombreCrudo) => {
     const q = nombreCrudo.toLowerCase().trim();
@@ -956,6 +975,40 @@ function ModalNuevoFiado({ abierto, clientes, productos, clientePreseleccionado,
     if (candidatos.length === 0) return null;
     candidatos.sort((a, b) => Math.abs(a.nombre.length - q.length) - Math.abs(b.nombre.length - q.length));
     return candidatos[0];
+  };
+
+  // Interpreta una frase como "una libra de arroz veinte córdobas" -> { nombre: "arroz", cantidad: 1, precio: 20 }
+  const interpretarLinea = (lineaOriginal) => {
+    let linea = lineaOriginal.toLowerCase().trim();
+    let precio = null;
+
+    // 1) Detectar precio: número seguido o precedido de "córdoba(s)", "c$", "peso(s)"
+    const mPrecio = linea.match(/(\d+(?:[.,]\d+)?)\s*(?:c\$|córdobas?|cordobas?|pesos?)\b/i) || linea.match(/(?:c\$|córdobas?|cordobas?|pesos?)\s*(\d+(?:[.,]\d+)?)/i);
+    if (mPrecio) {
+      precio = parseFloat(mPrecio[1].replace(",", "."));
+      linea = linea.replace(mPrecio[0], " ");
+    }
+
+    // 2) Detectar cantidad: dígito o palabra numérica al inicio (posiblemente seguida de "x" o unidad)
+    let cantidad = 1;
+    const mNumeroDigito = linea.match(/^\s*(\d+(?:[.,]\d+)?)\s*/);
+    if (mNumeroDigito) {
+      cantidad = parseFloat(mNumeroDigito[1].replace(",", "."));
+      linea = linea.slice(mNumeroDigito[0].length);
+    } else {
+      const primeraPalabra = linea.trim().split(/\s+/)[0];
+      if (primeraPalabra && NUMEROS_PALABRA[primeraPalabra] !== undefined) {
+        cantidad = NUMEROS_PALABRA[primeraPalabra];
+        linea = linea.trim().split(/\s+/).slice(1).join(" ");
+      }
+    }
+
+    // 3) Quitar palabras de unidad y conectores sueltos ("de")
+    PALABRAS_UNIDAD.forEach(u => { linea = linea.replace(new RegExp(`\\b${u}\\b`, "gi"), " "); });
+    linea = linea.replace(/^\s*de\s+/i, " ").replace(/\s+x\s*$/i, "");
+
+    const nombre = linea.replace(/\s+/g, " ").trim();
+    return { nombre, cantidad, precio };
   };
 
   const interpretarTexto = () => {
@@ -976,16 +1029,16 @@ function ModalNuevoFiado({ abierto, clientes, productos, clientePreseleccionado,
 
     const sinResolver = [];
     resto.forEach(linea => {
-      const m = linea.match(/^(.*?)(?:\s+x\s*|\s+)(\d+(?:[.,]\d+)?)\s*$/i);
-      const nombreCrudo = m ? m[1].trim() : linea;
-      const cantidad = m ? parseFloat(m[2].replace(",", ".")) : 1;
-      if (!nombreCrudo) return;
-      const producto = buscarProductoParecido(nombreCrudo);
+      const { nombre, cantidad, precio } = interpretarLinea(linea);
+      if (!nombre) return;
+      const producto = buscarProductoParecido(nombre);
       if (producto) {
-        const ok = agregarProductoALista(producto, cantidad);
-        if (!ok) sinResolver.push({ texto: linea, nombreCrudo, cantidad });
+        const precioUsar = precio !== null ? precio : producto.venta;
+        const yaEnCarrito = items.reduce((a, it) => a + (it.producto_id === producto.id ? it.cantidad : 0), 0);
+        if (cantidad + yaEnCarrito > producto.cantidad) { sinResolver.push({ texto: linea, nombreCrudo: nombre, cantidad, precio }); return; }
+        setItems(prev => [...prev, { producto_id: producto.id, nombre: producto.nombre, cantidad, precio_unitario: precioUsar, tipo: "inventario" }]);
       } else {
-        sinResolver.push({ texto: linea, nombreCrudo, cantidad });
+        sinResolver.push({ texto: linea, nombreCrudo: nombre, cantidad, precio });
       }
     });
     setNoResueltos(sinResolver);
@@ -996,6 +1049,13 @@ function ModalNuevoFiado({ abierto, clientes, productos, clientePreseleccionado,
     const item = noResueltos[i];
     const ok = agregarProductoALista(producto, item.cantidad);
     if (!ok) { alert(`Solo hay ${producto.cantidad} unidades de ${producto.nombre} en stock.`); return; }
+    setNoResueltos(noResueltos.filter((_, idx) => idx !== i));
+  };
+
+  const resolverComoExterno = (i) => {
+    const item = noResueltos[i];
+    if (!item.precio) { alert("No reconocí el precio de este — agregalo como externo a mano abajo."); return; }
+    setItems(prev => [...prev, { producto_id: null, nombre: item.nombreCrudo, cantidad: item.cantidad, precio_unitario: item.precio, tipo: "externo" }]);
     setNoResueltos(noResueltos.filter((_, idx) => idx !== i));
   };
 
@@ -1035,15 +1095,22 @@ function ModalNuevoFiado({ abierto, clientes, productos, clientePreseleccionado,
             <div className="space-y-2">
               {noResueltos.map((item, i) => (
                 <div key={i} className="bg-white dark:bg-black rounded-lg p-2">
-                  <div className="text-xs text-slate-600 dark:text-white/70 mb-1.5">"{item.texto}"</div>
+                  <div className="text-xs text-slate-600 dark:text-white/70 mb-1.5">
+                    "{item.texto}" — cant: {item.cantidad}{item.precio !== null ? ` · precio: C$${item.precio}` : ""}
+                  </div>
                   <div className="flex gap-1.5">
                     <select onChange={(e) => { const p = productos.find(pr => pr.id === e.target.value); if (p) resolverManual(i, p); }} defaultValue=""
                       className="flex-1 min-w-0 px-2 py-1.5 rounded border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-xs text-slate-700 dark:text-white outline-none">
-                      <option value="" disabled>Elegir producto...</option>
+                      <option value="" disabled>Elegir producto del inventario...</option>
                       {productos.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
                     </select>
                     <button onClick={() => descartarNoResuelto(i)} className="text-rose-500 text-xs px-2">Descartar</button>
                   </div>
+                  {item.precio !== null && (
+                    <button onClick={() => resolverComoExterno(i)} className="w-full mt-1.5 text-xs font-medium text-[#16233D] dark:text-[#E3A73B] underline text-left">
+                      O agregar "{item.nombreCrudo}" como fuera de inventario (C${item.precio})
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
