@@ -2100,9 +2100,17 @@ function PaginaCaja() {
 
   const abrirCaja = async () => {
     const monto = parseFloat(montoApertura) || 0;
+    if (monto > 0 && monto > saldoGuardado) {
+      const continuar = confirm(`El dinero guardado (C$${saldoGuardado.toFixed(2)}) no alcanza para cubrir el monto inicial (C$${monto.toFixed(2)}). ¿Querés abrir la caja de todas formas? El dinero guardado quedará en negativo.`);
+      if (!continuar) return;
+    }
     setProcesando(true);
     try {
       await supaApi.abrirCaja(monto);
+      // El monto inicial de la caja siempre sale del dinero guardado, y queda registrado en su historial.
+      if (monto > 0) {
+        await supaApi.crearMovimientoGuardado({ tipo: "ingreso", monto, descripcion: "Apertura de caja" });
+      }
       setMontoApertura("");
       await cargarTodo();
     } catch (e) { alert(e.message); }
