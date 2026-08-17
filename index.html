@@ -50,24 +50,41 @@ let alRefrescarSesion = null;
 let alExpirarSesion = null;
 let refrescandoPromesa = null;
 
+// Devuelve { ok, invalida }. "invalida" solo es true cuando el servidor confirma
+// explícitamente que el refresh token ya no sirve (sesión realmente vencida/cerrada
+// en otro lado). Cualquier otro problema (sin señal, portal cautivo de wifi pago,
+// timeout, respuesta rara) se reporta como invalida:false para NO borrar la sesión:
+// así la app puede seguir trabajando offline en vez de mandar al usuario al login.
 async function refrescarToken() {
-  if (!currentRefreshToken) return false;
+  if (!currentRefreshToken) return { ok: false, invalida: false };
   if (refrescandoPromesa) return refrescandoPromesa;
   refrescandoPromesa = (async () => {
     try {
+      const controlador = new AbortController();
+      const tiempoFuera = setTimeout(() => controlador.abort(), 8000);
       const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
         method: "POST",
         headers: { apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" },
         body: JSON.stringify({ refresh_token: currentRefreshToken }),
+        signal: controlador.signal,
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.access_token) return false;
+      clearTimeout(tiempoFuera);
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data || !data.access_token) {
+        // El servidor respondió (no fue un fallo de red) y dijo explícitamente
+        // que el refresh token es inválido (400/401 con cuerpo JSON de error real
+        // de Supabase). Eso sí es una sesión vencida de verdad.
+        const invalida = (res.status === 400 || res.status === 401) && data !== null;
+        return { ok: false, invalida };
+      }
       currentAccessToken = data.access_token;
       currentRefreshToken = data.refresh_token || currentRefreshToken;
       if (alRefrescarSesion) alRefrescarSesion(data);
-      return true;
+      return { ok: true, invalida: false };
     } catch (e) {
-      return false;
+      // fetch lanzó excepción: sin conexión real, portal cautivo, timeout, DNS, etc.
+      // No es evidencia de que la sesión sea inválida.
+      return { ok: false, invalida: false };
     } finally {
       refrescandoPromesa = null;
     }
@@ -76,15 +93,17 @@ async function refrescarToken() {
 }
 
 // Envoltorio de fetch: si el token venció (401), renueva la sesión sola y reintenta una vez.
+// Si la renovación falla por un problema de conexión (no porque la sesión sea inválida),
+// dejamos la sesión guardada intacta para que la app siga funcionando offline.
 async function peticionApi(url, opciones = {}) {
   const { method = "GET", extraHeaders = {}, body } = opciones;
   const intentar = () => fetch(url, { method, headers: getHeaders(extraHeaders), body });
   let res = await intentar();
   if (res.status === 401) {
-    const renovado = await refrescarToken();
-    if (renovado) {
+    const { ok, invalida } = await refrescarToken();
+    if (ok) {
       res = await intentar();
-    } else if (alExpirarSesion) {
+    } else if (invalida && alExpirarSesion) {
       alExpirarSesion();
     }
   }
