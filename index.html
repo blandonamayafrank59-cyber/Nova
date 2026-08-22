@@ -50,41 +50,24 @@ let alRefrescarSesion = null;
 let alExpirarSesion = null;
 let refrescandoPromesa = null;
 
-// Devuelve { ok, invalida }. "invalida" solo es true cuando el servidor confirma
-// explícitamente que el refresh token ya no sirve (sesión realmente vencida/cerrada
-// en otro lado). Cualquier otro problema (sin señal, portal cautivo de wifi pago,
-// timeout, respuesta rara) se reporta como invalida:false para NO borrar la sesión:
-// así la app puede seguir trabajando offline en vez de mandar al usuario al login.
 async function refrescarToken() {
-  if (!currentRefreshToken) return { ok: false, invalida: false };
+  if (!currentRefreshToken) return false;
   if (refrescandoPromesa) return refrescandoPromesa;
   refrescandoPromesa = (async () => {
     try {
-      const controlador = new AbortController();
-      const tiempoFuera = setTimeout(() => controlador.abort(), 8000);
       const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
         method: "POST",
         headers: { apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" },
         body: JSON.stringify({ refresh_token: currentRefreshToken }),
-        signal: controlador.signal,
       });
-      clearTimeout(tiempoFuera);
-      const data = await res.json().catch(() => null);
-      if (!res.ok || !data || !data.access_token) {
-        // El servidor respondió (no fue un fallo de red) y dijo explícitamente
-        // que el refresh token es inválido (400/401 con cuerpo JSON de error real
-        // de Supabase). Eso sí es una sesión vencida de verdad.
-        const invalida = (res.status === 400 || res.status === 401) && data !== null;
-        return { ok: false, invalida };
-      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.access_token) return false;
       currentAccessToken = data.access_token;
       currentRefreshToken = data.refresh_token || currentRefreshToken;
       if (alRefrescarSesion) alRefrescarSesion(data);
-      return { ok: true, invalida: false };
+      return true;
     } catch (e) {
-      // fetch lanzó excepción: sin conexión real, portal cautivo, timeout, DNS, etc.
-      // No es evidencia de que la sesión sea inválida.
-      return { ok: false, invalida: false };
+      return false;
     } finally {
       refrescandoPromesa = null;
     }
@@ -93,17 +76,15 @@ async function refrescarToken() {
 }
 
 // Envoltorio de fetch: si el token venció (401), renueva la sesión sola y reintenta una vez.
-// Si la renovación falla por un problema de conexión (no porque la sesión sea inválida),
-// dejamos la sesión guardada intacta para que la app siga funcionando offline.
 async function peticionApi(url, opciones = {}) {
   const { method = "GET", extraHeaders = {}, body } = opciones;
   const intentar = () => fetch(url, { method, headers: getHeaders(extraHeaders), body });
   let res = await intentar();
   if (res.status === 401) {
-    const { ok, invalida } = await refrescarToken();
-    if (ok) {
+    const renovado = await refrescarToken();
+    if (renovado) {
       res = await intentar();
-    } else if (invalida && alExpirarSesion) {
+    } else if (alExpirarSesion) {
       alExpirarSesion();
     }
   }
@@ -552,6 +533,17 @@ const supaApi = {
     });
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo registrar el fiado"); }
     return res.json();
+  },
+  async actualizarFiado(id, cambios) {
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/fiados?id=eq.${id}`, {
+      method: "PATCH", extraHeaders: { Prefer: "return=representation" }, body: JSON.stringify(cambios),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo actualizar el fiado"); }
+    return res.json();
+  },
+  async eliminarFiado(id) {
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/fiados?id=eq.${id}`, { method: "DELETE" });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo eliminar el fiado"); }
   },
   async listarFiadosCliente(clienteId) {
     const res = await peticionApi(`${SUPABASE_URL}/rest/v1/fiados?cliente_id=eq.${clienteId}&select=*&order=creado_en.desc`);
@@ -1015,16 +1007,98 @@ function ModalAbono({ abierto, cliente, onGuardar, onCerrar, guardando }) {
   );
 }
 
-function ModalHistorialCliente({ abierto, cliente, pagos, onCerrar }) {
+function ModalEditarFiado({ fiado, productos, onGuardar, onCerrar, guardando }) {
+  const [items, setItems] = useState([]);
+  useEffect(() => {
+    if (fiado) setItems((fiado.productos || []).map(it => ({ ...it })));
+  }, [fiado]);
+  if (!fiado) return null;
+
+  const cambiarItem = (i, campo, valor) => {
+    setItems(items.map((it, idx) => idx === i ? { ...it, [campo]: valor } : it));
+  };
+  const quitarItem = (i) => setItems(items.filter((_, idx) => idx !== i));
+  const total = items.reduce((a, it) => a + (parseFloat(it.cantidad) || 0) * (parseFloat(it.precio_unitario) || 0), 0);
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={onCerrar}>
+      <div onClick={(e) => e.stopPropagation()} className="bg-white dark:bg-black rounded-2xl p-6 w-full max-w-md max-h-[85vh] overflow-y-auto">
+        <h2 className="font-semibold text-slate-800 dark:text-white mb-4 font-display">Editar fiado</h2>
+        <div className="space-y-3 mb-4">
+          {items.map((it, i) => (
+            <div key={i} className="bg-slate-50 dark:bg-neutral-900 rounded-lg p-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-semibold text-slate-500 dark:text-white/60">
+                  {it.tipo === "externo" ? "Fuera de inventario" : "Del inventario"}
+                </span>
+                <button onClick={() => quitarItem(i)} className="text-rose-500 text-xs">✕ Quitar</button>
+              </div>
+              <input value={it.nombre} onChange={(e) => cambiarItem(i, "nombre", e.target.value)} placeholder="Nombre"
+                disabled={it.tipo !== "externo"}
+                className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B] mb-2 disabled:opacity-60" />
+              <div className="flex gap-2">
+                <input type="number" value={it.cantidad} onChange={(e) => cambiarItem(i, "cantidad", parseFloat(e.target.value) || 0)} placeholder="Cantidad"
+                  className="flex-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
+                <input type="number" value={it.precio_unitario} onChange={(e) => cambiarItem(i, "precio_unitario", parseFloat(e.target.value) || 0)} placeholder="Precio unitario"
+                  className="flex-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
+              </div>
+            </div>
+          ))}
+          {items.length === 0 && <p className="text-sm text-slate-400">Sin productos — se eliminarán al guardar si no agregás ninguno.</p>}
+        </div>
+        <div className="bg-slate-50 dark:bg-neutral-900 rounded-lg p-3 text-sm text-slate-700 dark:text-white flex items-center justify-between mb-4">
+          <span>Total</span>
+          <span className="font-mono font-bold">C${total.toFixed(2)}</span>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={onCerrar} className="flex-1 px-3 py-2.5 rounded-lg text-sm font-medium border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white">Cancelar</button>
+          <button disabled={guardando} onClick={() => onGuardar(fiado, items)} className="flex-1 px-3 py-2.5 rounded-lg text-sm font-semibold bg-[#E3A73B] text-[#16233D] disabled:opacity-50 flex items-center justify-center gap-2">
+            {guardando && <IconLoading />} Guardar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ModalHistorialCliente({ abierto, cliente, pagos, onCerrar, onEditarFiado, onEliminarFiado }) {
   const [fiados, setFiados] = useState([]);
   const [cargando, setCargando] = useState(false);
-  useEffect(() => {
-    if (!abierto || !cliente) return;
+  const [fiadoEditando, setFiadoEditando] = useState(null);
+  const [guardando, setGuardando] = useState(false);
+
+  const recargar = useCallback(() => {
+    if (!cliente) return;
     setCargando(true);
     supaApi.listarFiadosCliente(cliente.id).then(setFiados).catch(() => setFiados([])).finally(() => setCargando(false));
+  }, [cliente]);
+
+  useEffect(() => {
+    if (!abierto || !cliente) return;
+    recargar();
   }, [abierto, cliente]);
+
   if (!abierto || !cliente) return null;
   const pagosCliente = pagos.filter(p => p.cliente_id === cliente.id);
+
+  const guardarEdicion = async (fiado, items) => {
+    setGuardando(true);
+    try {
+      await onEditarFiado(fiado, items);
+      setFiadoEditando(null);
+      recargar();
+    } catch (e) { alert(e.message); }
+    finally { setGuardando(false); }
+  };
+
+  const eliminar = async (f) => {
+    if (!confirm(`¿Eliminar este fiado de C$${Number(f.total).toFixed(2)}? Se devuelve al inventario lo que corresponda y se ajusta el saldo del cliente.`)) return;
+    try {
+      await onEliminarFiado(f);
+      recargar();
+    } catch (e) { alert(e.message); }
+  };
+
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-40">
       <div className="bg-white dark:bg-black rounded-2xl p-6 w-full max-w-md max-h-[85vh] overflow-y-auto">
@@ -1040,8 +1114,12 @@ function ModalHistorialCliente({ abierto, cliente, pagos, onCerrar }) {
                 <span className="font-mono font-semibold text-slate-700 dark:text-white">C${Number(f.total).toFixed(2)}</span>
                 <span className="text-xs text-slate-400 dark:text-white/40">{new Date(f.creado_en).toLocaleString()}</span>
               </div>
-              <div className="text-xs text-slate-500 dark:text-white/60 mt-1">
-                {(f.productos || []).map(p => `${p.nombre} x${p.cantidad}`).join(", ")}
+              <div className="text-xs text-slate-500 dark:text-white/60 mt-1 mb-2">
+                {(f.productos || []).map(p => `${p.nombre} x${p.cantidad}`).join(", ") || "Sin productos"}
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => setFiadoEditando(f)} className="text-xs px-2.5 py-1 rounded border border-slate-200 dark:border-white/20 text-slate-600 dark:text-white">✏️ Editar</button>
+                <button onClick={() => eliminar(f)} className="text-xs px-2.5 py-1 rounded border border-rose-200 dark:border-rose-900/30 text-rose-500">🗑️ Eliminar</button>
               </div>
             </div>
           ))}
@@ -1063,6 +1141,8 @@ function ModalHistorialCliente({ abierto, cliente, pagos, onCerrar }) {
           <button onClick={onCerrar} className="px-4 py-2 rounded-lg text-sm font-medium border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white">Cerrar</button>
         </div>
       </div>
+
+      <ModalEditarFiado fiado={fiadoEditando} guardando={guardando} onGuardar={guardarEdicion} onCerrar={() => setFiadoEditando(null)} />
     </div>
   );
 }
@@ -1448,7 +1528,7 @@ function ModalNuevoFiado({ abierto, clientes, productos, clientePreseleccionado,
   );
 }
 
-function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, error, onRecargar, onCrearCliente, onActualizarCliente, onEliminarCliente, onCrearFiado, onRegistrarPago }) {
+function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, error, onRecargar, onCrearCliente, onActualizarCliente, onEliminarCliente, onCrearFiado, onRegistrarPago, onEditarFiado, onEliminarFiado }) {
   const [busqueda, setBusqueda] = useState("");
   const [modalCliente, setModalCliente] = useState(false);
   const [clienteEditando, setClienteEditando] = useState(null);
@@ -1561,7 +1641,7 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
       <ModalCliente abierto={modalCliente} cliente={clienteEditando} guardando={guardando} onGuardar={guardarCliente} onCerrar={() => { setModalCliente(false); setClienteEditando(null); }} />
       <ModalNuevoFiado abierto={modalFiado} clientes={clientes} productos={productos} clientePreseleccionado={clienteParaFiado} guardando={guardando} onGuardar={guardarFiado} onCerrar={() => { setModalFiado(false); setClienteParaFiado(null); }} />
       <ModalAbono abierto={!!clienteAbono} cliente={clienteAbono} guardando={guardando} onGuardar={guardarAbono} onCerrar={() => setClienteAbono(null)} />
-      <ModalHistorialCliente abierto={!!clienteHistorial} cliente={clienteHistorial} pagos={pagosFiado} onCerrar={() => setClienteHistorial(null)} />
+      <ModalHistorialCliente abierto={!!clienteHistorial} cliente={clienteHistorial} pagos={pagosFiado} onCerrar={() => setClienteHistorial(null)} onEditarFiado={onEditarFiado} onEliminarFiado={onEliminarFiado} />
     </div>
   );
 }
@@ -2255,10 +2335,17 @@ function PaginaCaja() {
 
   const abrirCaja = async () => {
     const monto = parseFloat(montoApertura) || 0;
+    if (monto <= 0) { alert("Poné un monto mayor a 0"); return; }
+    if (monto > saldoGuardado) {
+      alert(`No hay suficiente dinero guardado para abrir con C$${monto.toFixed(2)}. Guardado actual: C$${saldoGuardado.toFixed(2)}. Editá el dinero guardado primero si hace falta.`);
+      return;
+    }
     setProcesando(true);
     try {
-      await supaApi.abrirCaja(monto);
+      await supaApi.abrirCaja(monto, fechaApertura);
+      await supaApi.crearMovimientoGuardado({ tipo: "ingreso", monto, descripcion: `Apertura de caja ${fechaApertura}` });
       setMontoApertura("");
+      setFechaApertura(new Date().toISOString().slice(0, 10));
       await cargarTodo();
     } catch (e) { alert(e.message); }
     finally { setProcesando(false); }
@@ -4067,6 +4154,60 @@ function AppInterna({ sesion, onCerrarSesion }) {
     await Promise.all([cargarProductos(), cargarCuentasPorCobrar()]);
   };
 
+  const handleEliminarFiado = async (fiado) => {
+    const cantidadesLocales = {};
+    for (const item of (fiado.productos || [])) {
+      if (item.tipo === "externo" || !item.producto_id) continue;
+      const producto = productos.find(p => p.id === item.producto_id);
+      if (producto) {
+        if (!(producto.id in cantidadesLocales)) cantidadesLocales[producto.id] = producto.cantidad;
+        cantidadesLocales[producto.id] += item.cantidad;
+        await supaApi.actualizarProducto(producto.id, { cantidad: cantidadesLocales[producto.id] });
+      }
+    }
+    const cliente = clientes.find(c => c.id === fiado.cliente_id);
+    if (cliente) {
+      const nuevoSaldo = Math.max(0, Number(cliente.saldo_pendiente) - Number(fiado.total));
+      await supaApi.actualizarCliente(cliente.id, { saldo_pendiente: nuevoSaldo });
+    }
+    await supaApi.eliminarFiado(fiado.id);
+    await Promise.all([cargarProductos(), cargarCuentasPorCobrar()]);
+  };
+
+  const handleEditarFiado = async (fiado, nuevosItems) => {
+    const nuevoTotal = nuevosItems.reduce((a, it) => a + (Number(it.cantidad) || 0) * (Number(it.precio_unitario) || 0), 0);
+
+    // Ajustar inventario por la diferencia entre lo que había antes y lo que queda ahora, por producto
+    const viejosPorProducto = {};
+    (fiado.productos || []).forEach(it => {
+      if (it.tipo === "externo" || !it.producto_id) return;
+      viejosPorProducto[it.producto_id] = (viejosPorProducto[it.producto_id] || 0) + Number(it.cantidad);
+    });
+    const nuevosPorProducto = {};
+    nuevosItems.forEach(it => {
+      if (it.tipo === "externo" || !it.producto_id) return;
+      nuevosPorProducto[it.producto_id] = (nuevosPorProducto[it.producto_id] || 0) + Number(it.cantidad);
+    });
+    const idsProductos = new Set([...Object.keys(viejosPorProducto), ...Object.keys(nuevosPorProducto)]);
+    for (const pid of idsProductos) {
+      const delta = (viejosPorProducto[pid] || 0) - (nuevosPorProducto[pid] || 0); // positivo = se devuelve stock
+      if (delta !== 0) {
+        const producto = productos.find(p => p.id === pid);
+        if (producto) await supaApi.actualizarProducto(producto.id, { cantidad: Math.max(0, producto.cantidad + delta) });
+      }
+    }
+
+    const cliente = clientes.find(c => c.id === fiado.cliente_id);
+    if (cliente) {
+      const deltaTotal = nuevoTotal - Number(fiado.total);
+      const nuevoSaldo = Math.max(0, Number(cliente.saldo_pendiente) + deltaTotal);
+      await supaApi.actualizarCliente(cliente.id, { saldo_pendiente: nuevoSaldo });
+    }
+
+    await supaApi.actualizarFiado(fiado.id, { productos: nuevosItems, total: nuevoTotal });
+    await Promise.all([cargarProductos(), cargarCuentasPorCobrar()]);
+  };
+
   const [consumoHogar, setConsumoHogar] = useState([]);
   const [cargandoConsumo, setCargandoConsumo] = useState(true);
   const [errorConsumo, setErrorConsumo] = useState(null);
@@ -4164,7 +4305,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
     perdidas: <PaginaPerdidas productos={productos} onActualizarProducto={handleActualizar} onRecargarProductos={cargarProductos} />,
     historial: <PaginaHistorial productos={productos} onActualizarProducto={handleActualizar} onRecargarProductos={cargarProductos} />,
     estadisticas: <PaginaEstadisticas consumoHogar={consumoHogar} />,
-    cuentas: <PaginaCuentasPorCobrar clientes={clientes} pagosFiado={pagosFiado} productos={productos} cargando={cargandoCuentas} error={errorCuentas} onRecargar={cargarCuentasPorCobrar} onCrearCliente={handleCrearCliente} onActualizarCliente={handleActualizarCliente} onEliminarCliente={handleEliminarCliente} onCrearFiado={handleCrearFiado} onRegistrarPago={handleRegistrarPago} />,
+    cuentas: <PaginaCuentasPorCobrar clientes={clientes} pagosFiado={pagosFiado} productos={productos} cargando={cargandoCuentas} error={errorCuentas} onRecargar={cargarCuentasPorCobrar} onCrearCliente={handleCrearCliente} onActualizarCliente={handleActualizarCliente} onEliminarCliente={handleEliminarCliente} onCrearFiado={handleCrearFiado} onRegistrarPago={handleRegistrarPago} onEditarFiado={handleEditarFiado} onEliminarFiado={handleEliminarFiado} />,
     consumo: <PaginaConsumoHogar productos={productos} registros={consumoHogar} cargando={cargandoConsumo} error={errorConsumo} onRegistrar={handleRegistrarConsumo} onEliminar={handleEliminarConsumo} />,
     produccion: <PaginaProduccion productos={productos} lotes={lotes} cargando={cargandoLotes} error={errorLotes} onIniciar={handleIniciarLote} onAgregarIngrediente={handleAgregarIngredienteLote} onFinalizar={handleFinalizarLote} onEliminar={handleEliminarLote} />,
     notas: <ProximamenteCard titulo="Notas y recordatorios" descripcion="Un espacio para pedidos pendientes, ideas y tareas del negocio." icon={IconNote} />,
