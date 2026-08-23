@@ -3323,81 +3323,78 @@ function TarjetaProductoGrid({ producto, puedeEditar, verCostos, cantidadEnCarri
   };
 
   return (
-    <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl p-3 flex flex-col gap-2">
-      <div className="flex items-start justify-between gap-2">
-        {puedeEditar ? (
-          <>
-            <button type="button" onClick={() => setMenuFotoAbierto(true)}
-              className="relative w-20 h-20 rounded-xl bg-[#16233D]/5 dark:bg-white/5 flex items-center justify-center shrink-0 overflow-hidden">
-              {producto.imagen ? (
-                <img src={producto.imagen} alt={producto.nombre} className="w-full h-full object-cover" />
-              ) : (
-                <span className="text-2xl font-bold text-[#16233D]/50 dark:text-white/40 font-display">{inicial}</span>
-              )}
-              {subiendoFoto && (
-                <div className="absolute inset-0 bg-black/40 flex items-center justify-center"><IconLoading className="text-white" /></div>
-              )}
-            </button>
-            <input id={idCamara} type="file" accept="image/*" capture="environment" onChange={elegirFoto} className="hidden" />
-            <input id={idGaleria} type="file" accept="image/*" onChange={elegirFoto} className="hidden" />
-            {menuFotoAbierto && (
-              <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-40" onClick={() => setMenuFotoAbierto(false)}>
-                <div onClick={(e) => e.stopPropagation()} className="bg-white dark:bg-black rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-xs">
-                  <div className="font-semibold text-slate-800 dark:text-white mb-3 font-display truncate">Foto de {producto.nombre}</div>
-                  <div className="space-y-1.5">
-                    <label htmlFor={idCamara}
-                      className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5 cursor-pointer">
-                      📷 Tomar foto
-                    </label>
-                    <label htmlFor={idGaleria}
-                      className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5 cursor-pointer">
-                      🖼️ Elegir de galería
-                    </label>
-                    {producto.imagen && (
-                      <button onClick={quitarFoto} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/10 flex items-center gap-2.5">
-                        🗑️ Quitar foto
-                      </button>
-                    )}
-                  </div>
-                  <button onClick={() => setMenuFotoAbierto(false)} className="w-full mt-3 px-3 py-2.5 rounded-lg text-sm font-medium border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white">Cancelar</button>
-                </div>
-              </div>
-            )}
-          </>
+    <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl overflow-hidden flex flex-col">
+      <div
+        role={puedeEditar ? "button" : undefined}
+        tabIndex={puedeEditar ? 0 : undefined}
+        onClick={() => puedeEditar && setMenuFotoAbierto(true)}
+        onKeyDown={(e) => { if (puedeEditar && (e.key === "Enter" || e.key === " ")) setMenuFotoAbierto(true); }}
+        className={`relative w-full aspect-square bg-[#16233D]/5 dark:bg-white/5 ${puedeEditar ? "cursor-pointer" : ""}`}>
+        {producto.imagen ? (
+          <img src={producto.imagen} alt={producto.nombre} className="w-full h-full object-cover" />
         ) : (
-          <div className="w-20 h-20 rounded-xl bg-[#16233D]/5 dark:bg-white/5 flex items-center justify-center shrink-0 overflow-hidden">
-            {producto.imagen ? (
-              <img src={producto.imagen} alt={producto.nombre} className="w-full h-full object-cover" />
-            ) : (
-              <span className="text-2xl font-bold text-[#16233D]/50 dark:text-white/40 font-display">{inicial}</span>
-            )}
+          <div className="w-full h-full flex items-center justify-center">
+            <span className="text-4xl font-bold text-[#16233D]/30 dark:text-white/25 font-display">{inicial}</span>
           </div>
         )}
-        {puedeEditar && (
-          <button onClick={() => onAbrirMenu(producto)} className="w-7 h-7 rounded-full flex items-center justify-center text-slate-400 dark:text-white/50 hover:bg-slate-100 dark:hover:bg-white/10 text-base leading-none shrink-0">⋮</button>
+        {subiendoFoto && (
+          <div className="absolute inset-0 bg-black/40 flex items-center justify-center"><IconLoading className="text-white" /></div>
         )}
-      </div>
-      <div className="min-w-0">
-        <div className="text-sm font-semibold text-slate-800 dark:text-white truncate" title={producto.nombre}>{producto.nombre}</div>
-        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-          <span className="text-xs text-slate-400 dark:text-white/40 font-mono">Stock {producto.cantidad}</span>
-          {bajo && <Badge tone="danger">Bajo</Badge>}
-        </div>
-      </div>
-      <div className="flex items-end justify-between mt-1">
-        <div className="flex flex-col">
-          <span className="text-base font-bold text-[#16233D] dark:text-[#E3A73B] font-mono">C${Number(producto.venta).toFixed(2)}</span>
-          {verCostos && <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-mono">{margen}% margen</span>}
-        </div>
+        {bajo && (
+          <div className="absolute top-2 left-2"><Badge tone="danger">Bajo</Badge></div>
+        )}
         {puedeEditar && (
-          <button disabled={sinStock} onClick={() => onAgregar(producto)}
-            className="relative w-8 h-8 rounded-full bg-[#16233D] text-white flex items-center justify-center text-lg font-bold disabled:opacity-30 active:scale-95 transition-transform">
+          <button onClick={(e) => { e.stopPropagation(); onAbrirMenu(producto); }}
+            className="absolute top-2 right-2 w-7 h-7 rounded-full bg-white/90 dark:bg-black/70 flex items-center justify-center text-slate-500 dark:text-white/70 text-base leading-none shadow-sm">⋮</button>
+        )}
+        {puedeEditar && (
+          <button disabled={sinStock} onClick={(e) => { e.stopPropagation(); onAgregar(producto); }}
+            className="absolute bottom-2 right-2 w-10 h-10 rounded-full bg-[#16233D] text-white flex items-center justify-center text-xl font-bold disabled:opacity-30 shadow-md active:scale-95 transition-transform">
             +
             {cantidadEnCarrito > 0 && (
               <span className="absolute -top-1.5 -right-1.5 bg-[#E3A73B] text-[#16233D] text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center">{cantidadEnCarrito}</span>
             )}
           </button>
         )}
+      </div>
+
+      {puedeEditar && (
+        <>
+          <input id={idCamara} type="file" accept="image/*" capture="environment" onChange={elegirFoto} className="hidden" />
+          <input id={idGaleria} type="file" accept="image/*" onChange={elegirFoto} className="hidden" />
+          {menuFotoAbierto && (
+            <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-40" onClick={() => setMenuFotoAbierto(false)}>
+              <div onClick={(e) => e.stopPropagation()} className="bg-white dark:bg-black rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-xs">
+                <div className="font-semibold text-slate-800 dark:text-white mb-3 font-display truncate">Foto de {producto.nombre}</div>
+                <div className="space-y-1.5">
+                  <label htmlFor={idCamara}
+                    className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5 cursor-pointer">
+                    📷 Tomar foto
+                  </label>
+                  <label htmlFor={idGaleria}
+                    className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5 cursor-pointer">
+                    🖼️ Elegir de galería
+                  </label>
+                  {producto.imagen && (
+                    <button onClick={quitarFoto} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/10 flex items-center gap-2.5">
+                      🗑️ Quitar foto
+                    </button>
+                  )}
+                </div>
+                <button onClick={() => setMenuFotoAbierto(false)} className="w-full mt-3 px-3 py-2.5 rounded-lg text-sm font-medium border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white">Cancelar</button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      <div className="p-3 flex flex-col gap-1">
+        <div className="text-sm font-semibold text-slate-800 dark:text-white truncate" title={producto.nombre}>{producto.nombre}</div>
+        <span className="text-xs text-slate-400 dark:text-white/40 font-mono">Stock {producto.cantidad}</span>
+        <div className="flex flex-col mt-1">
+          <span className="text-base font-bold text-[#16233D] dark:text-[#E3A73B] font-mono">C${Number(producto.venta).toFixed(2)}</span>
+          {verCostos && <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-mono">{margen}% margen</span>}
+        </div>
       </div>
     </div>
   );
