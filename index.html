@@ -3227,7 +3227,145 @@ function ModalProducto({ abierto, producto, onGuardar, onCerrar, guardando, onAc
   );
 }
 
-function PaginaInventario({ productos, cargando, error, onRecargar, onCrear, onActualizar, onEliminar, onVentaRegistrada, verCostos = true, puedeEditar = true }) {
+function TarjetaProductoGrid({ producto, puedeEditar, verCostos, cantidadEnCarrito, onAgregar, onAbrirMenu }) {
+  const bajo = producto.cantidad <= producto.minimo;
+  const inicial = producto.nombre.trim().charAt(0).toUpperCase() || "?";
+  const sinStock = producto.cantidad <= 0;
+  const margen = producto.costo > 0 ? ((producto.venta - producto.costo) / producto.costo * 100).toFixed(0) : 0;
+  return (
+    <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl p-3 flex flex-col gap-2">
+      <div className="flex items-start justify-between gap-2">
+        <div className="w-12 h-12 rounded-xl bg-[#16233D]/5 dark:bg-white/5 flex items-center justify-center shrink-0">
+          <span className="text-lg font-bold text-[#16233D]/50 dark:text-white/40 font-display">{inicial}</span>
+        </div>
+        {puedeEditar && (
+          <button onClick={() => onAbrirMenu(producto)} className="w-7 h-7 rounded-full flex items-center justify-center text-slate-400 dark:text-white/50 hover:bg-slate-100 dark:hover:bg-white/10 text-base leading-none shrink-0">⋮</button>
+        )}
+      </div>
+      <div className="min-w-0">
+        <div className="text-sm font-semibold text-slate-800 dark:text-white truncate" title={producto.nombre}>{producto.nombre}</div>
+        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+          <span className="text-xs text-slate-400 dark:text-white/40 font-mono">Stock {producto.cantidad}</span>
+          {bajo && <Badge tone="danger">Bajo</Badge>}
+        </div>
+      </div>
+      <div className="flex items-end justify-between mt-1">
+        <div className="flex flex-col">
+          <span className="text-base font-bold text-[#16233D] dark:text-[#E3A73B] font-mono">C${Number(producto.venta).toFixed(2)}</span>
+          {verCostos && <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-mono">{margen}% margen</span>}
+        </div>
+        {puedeEditar && (
+          <button disabled={sinStock} onClick={() => onAgregar(producto)}
+            className="relative w-8 h-8 rounded-full bg-[#16233D] text-white flex items-center justify-center text-lg font-bold disabled:opacity-30 active:scale-95 transition-transform">
+            +
+            {cantidadEnCarrito > 0 && (
+              <span className="absolute -top-1.5 -right-1.5 bg-[#E3A73B] text-[#16233D] text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center">{cantidadEnCarrito}</span>
+            )}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CarritoVentaModal({ abierto, items, productos, clientes, onCambiarCantidad, onQuitar, onConfirmar, onCerrar, procesando }) {
+  const [metodo, setMetodo] = useState("efectivo");
+  const [clienteId, setClienteId] = useState("");
+  const [pagoRecibido, setPagoRecibido] = useState("");
+
+  useEffect(() => {
+    if (abierto) { setMetodo("efectivo"); setClienteId(""); setPagoRecibido(""); }
+  }, [abierto]);
+
+  if (!abierto) return null;
+
+  const lineas = Object.entries(items)
+    .map(([id, cantidad]) => {
+      const producto = productos.find(p => String(p.id) === String(id));
+      return producto ? { producto, cantidad } : null;
+    })
+    .filter(Boolean);
+
+  const total = lineas.reduce((a, l) => a + l.cantidad * Number(l.producto.venta), 0);
+  const pago = parseFloat(pagoRecibido) || 0;
+  const cambio = Math.max(0, pago - total);
+  const puedeConfirmar = lineas.length > 0 && (metodo === "efectivo" || (metodo === "fiado" && clienteId));
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-40" onClick={onCerrar}>
+      <div onClick={(e) => e.stopPropagation()} className="bg-white dark:bg-black rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-sm max-h-[85vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-bold text-slate-800 dark:text-white font-display">Carrito de venta</h3>
+          <button onClick={onCerrar} className="text-slate-400 dark:text-white/50"><IconClose /></button>
+        </div>
+
+        {lineas.length === 0 ? (
+          <p className="text-sm text-slate-400 text-center py-8">El carrito está vacío.</p>
+        ) : (
+          <div className="space-y-2 mb-4">
+            {lineas.map(({ producto, cantidad }) => (
+              <div key={producto.id} className="flex items-center gap-2 bg-slate-50 dark:bg-neutral-900 rounded-xl p-2.5">
+                <div className="w-9 h-9 rounded-lg bg-[#16233D]/10 dark:bg-white/10 flex items-center justify-center shrink-0">
+                  <span className="text-sm font-bold text-[#16233D]/60 dark:text-white/50 font-display">{producto.nombre.trim().charAt(0).toUpperCase()}</span>
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium text-slate-700 dark:text-white truncate">{producto.nombre}</div>
+                  <div className="text-xs text-slate-400 dark:text-white/40 font-mono">C${Number(producto.venta).toFixed(2)} / u</div>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button onClick={() => onCambiarCantidad(producto.id, -1)} className="w-6 h-6 rounded-full border border-slate-200 dark:border-white/20 text-slate-600 dark:text-white flex items-center justify-center text-sm">−</button>
+                  <span className="text-sm font-semibold w-4 text-center font-mono">{cantidad}</span>
+                  <button onClick={() => onCambiarCantidad(producto.id, 1)} disabled={cantidad >= producto.cantidad} className="w-6 h-6 rounded-full border border-slate-200 dark:border-white/20 text-slate-600 dark:text-white flex items-center justify-center text-sm disabled:opacity-30">+</button>
+                </div>
+                <div className="text-sm font-semibold text-[#16233D] dark:text-[#E3A73B] font-mono w-16 text-right shrink-0">C${(cantidad * Number(producto.venta)).toFixed(2)}</div>
+                <button onClick={() => onQuitar(producto.id)} className="text-slate-300 dark:text-white/30 hover:text-rose-500 text-sm shrink-0">🗑️</button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="border-t border-slate-100 dark:border-white/10 pt-3">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-sm text-slate-500 dark:text-white">{lineas.length} producto(s)</span>
+            <span className="text-xl font-bold text-[#16233D] dark:text-white font-mono">C${total.toFixed(2)}</span>
+          </div>
+
+          <div className="flex gap-2 mb-3">
+            <button onClick={() => setMetodo("efectivo")} className={`flex-1 py-2 rounded-lg text-sm font-semibold border ${metodo === "efectivo" ? "bg-[#16233D] text-white border-[#16233D]" : "border-slate-200 dark:border-white/10 text-slate-500 dark:text-white"}`}>Efectivo</button>
+            <button onClick={() => setMetodo("fiado")} className={`flex-1 py-2 rounded-lg text-sm font-semibold border ${metodo === "fiado" ? "bg-[#16233D] text-white border-[#16233D]" : "border-slate-200 dark:border-white/10 text-slate-500 dark:text-white"}`}>Fiado</button>
+          </div>
+
+          {metodo === "efectivo" ? (
+            <div className="bg-slate-50 dark:bg-neutral-900 rounded-lg p-3 mb-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs text-slate-500 dark:text-white">Pago recibido</span>
+                <input type="number" value={pagoRecibido} onChange={(e) => setPagoRecibido(e.target.value)} placeholder="0.00"
+                  className="w-24 text-right text-sm font-mono bg-transparent outline-none border-b border-slate-200 dark:border-white/20 text-slate-800 dark:text-white" />
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-500 dark:text-white">Cambio</span>
+                <span className="text-sm font-mono font-semibold text-slate-700 dark:text-white">C${cambio.toFixed(2)}</span>
+              </div>
+            </div>
+          ) : (
+            <select value={clienteId} onChange={(e) => setClienteId(e.target.value)}
+              className="w-full mb-3 px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]">
+              <option value="">Elegí un cliente...</option>
+              {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+            </select>
+          )}
+
+          <button disabled={!puedeConfirmar || procesando} onClick={() => onConfirmar({ lineas, total, metodo, clienteId })}
+            className="w-full py-3 rounded-xl text-sm font-semibold bg-[#E3A73B] text-[#16233D] disabled:opacity-50 flex items-center justify-center gap-2">
+            {procesando && <IconLoading />} Confirmar venta
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PaginaInventario({ productos, clientes = [], cargando, error, onRecargar, onCrear, onActualizar, onEliminar, onVentaRegistrada, onCrearFiado, verCostos = true, puedeEditar = true }) {
   const [busqueda, setBusqueda] = useState("");
   const [modalAbierto, setModalAbierto] = useState(false);
   const [productoEditando, setProductoEditando] = useState(null);
@@ -3283,8 +3421,53 @@ function PaginaInventario({ productos, cargando, error, onRecargar, onCrear, onA
     finally { setVendiendo(false); }
   };
 
+  const [carrito, setCarrito] = useState({});
+  const [carritoAbierto, setCarritoAbierto] = useState(false);
+  const [procesandoVenta, setProcesandoVenta] = useState(false);
+
+  const totalUnidadesCarrito = Object.values(carrito).reduce((a, b) => a + b, 0);
+
+  const agregarAlCarrito = (p) => {
+    setCarrito(prev => {
+      const actual = prev[p.id] || 0;
+      if (actual >= p.cantidad) return prev;
+      return { ...prev, [p.id]: actual + 1 };
+    });
+  };
+  const cambiarCantidadCarrito = (id, delta) => {
+    setCarrito(prev => {
+      const producto = productos.find(p => String(p.id) === String(id));
+      const actual = prev[id] || 0;
+      const nueva = Math.max(0, Math.min(producto ? producto.cantidad : actual, actual + delta));
+      if (nueva === 0) { const copia = { ...prev }; delete copia[id]; return copia; }
+      return { ...prev, [id]: nueva };
+    });
+  };
+  const quitarDelCarrito = (id) => {
+    setCarrito(prev => { const copia = { ...prev }; delete copia[id]; return copia; });
+  };
+
+  const confirmarVentaCarrito = async ({ lineas, total, metodo, clienteId }) => {
+    setProcesandoVenta(true);
+    try {
+      if (metodo === "efectivo") {
+        for (const { producto, cantidad } of lineas) {
+          await vender(producto, cantidad);
+        }
+      } else {
+        const items = lineas.map(({ producto, cantidad }) => ({
+          producto_id: producto.id, nombre: producto.nombre, cantidad, precio_unitario: producto.venta, tipo: "inventario",
+        }));
+        await onCrearFiado({ cliente_id: clienteId, productos: items, total });
+      }
+      setCarrito({});
+      setCarritoAbierto(false);
+    } catch (e) { alert(e.message); }
+    finally { setProcesandoVenta(false); }
+  };
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 pb-20">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-bold text-slate-800 dark:text-white font-display">Inventario</h1>
@@ -3315,45 +3498,27 @@ function PaginaInventario({ productos, cargando, error, onRecargar, onCrear, onA
       ) : filtrados.length === 0 ? (
         <div className="text-center py-16 text-slate-400 text-sm">{productos.length === 0 ? "Todavía no hay productos — agregá el primero." : "Sin resultados para tu búsqueda."}</div>
       ) : (
-        <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl overflow-hidden overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-[#16233D] text-white text-xs uppercase tracking-wide">
-                <th className="text-left px-4 py-3 font-semibold">Producto</th>
-                <th className="text-left px-4 py-3 font-semibold hidden sm:table-cell">Categoría</th>
-                <th className="text-right px-4 py-3 font-semibold">Stock</th>
-                {verCostos && <th className="text-right px-4 py-3 font-semibold hidden md:table-cell">Costo</th>}
-                <th className="text-right px-4 py-3 font-semibold">Venta</th>
-                {verCostos && <th className="text-right px-4 py-3 font-semibold hidden md:table-cell">Margen</th>}
-                <th className="text-center px-4 py-3 font-semibold">Estado</th>
-                <th className="px-4 py-3"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtrados.map((p, i) => {
-                const bajo = p.cantidad <= p.minimo;
-                const margen = p.costo > 0 ? ((p.venta - p.costo) / p.costo * 100).toFixed(0) : 0;
-                return (
-                  <tr key={p.id} className={`border-t border-slate-100 dark:border-white/10 ${i % 2 === 1 ? "bg-slate-50/60 dark:bg-black" : ""}`}>
-                    <td onClick={() => puedeEditar && setProductoMenu(p)} className={`px-4 py-3 font-medium text-slate-700 dark:text-white ${puedeEditar ? "cursor-pointer active:opacity-60" : ""}`}>{p.nombre}</td>
-                    <td className="px-4 py-3 text-slate-500 dark:text-white hidden sm:table-cell">{p.categoria}</td>
-                    <td className="px-4 py-3 text-right font-mono text-slate-700 dark:text-white">{p.cantidad}</td>
-                    {verCostos && <td className="px-4 py-3 text-right font-mono text-slate-500 dark:text-white hidden md:table-cell">C${Number(p.costo).toFixed(2)}</td>}
-                    <td className="px-4 py-3 text-right font-mono text-slate-700 dark:text-white">C${Number(p.venta).toFixed(2)}</td>
-                    {verCostos && <td className="px-4 py-3 text-right font-mono text-emerald-600 dark:text-emerald-400 hidden md:table-cell">{margen}%</td>}
-                    <td className="px-4 py-3 text-center">{bajo ? <Badge tone="danger">Stock bajo</Badge> : <Badge tone="ok">Bien</Badge>}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex gap-1 justify-end">
-                        {puedeEditar && <BotonVentaRapida producto={p} onVenderUno={(prod) => vender(prod, 1)} onAbrirCantidad={setProductoVentaCantidad} />}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+          {filtrados.map((p) => (
+            <TarjetaProductoGrid key={p.id} producto={p} puedeEditar={puedeEditar} verCostos={verCostos}
+              cantidadEnCarrito={carrito[p.id] || 0} onAgregar={agregarAlCarrito} onAbrirMenu={setProductoMenu} />
+          ))}
         </div>
       )}
+
+      {puedeEditar && totalUnidadesCarrito > 0 && (
+        <button onClick={() => setCarritoAbierto(true)}
+          className="fixed bottom-5 right-5 z-30 flex items-center gap-2 bg-[#16233D] text-white font-semibold text-sm pl-4 pr-5 py-3 rounded-full shadow-lg">
+          <IconCart />
+          <span>Ver carrito</span>
+          <span className="bg-[#E3A73B] text-[#16233D] text-xs font-bold rounded-full min-w-[20px] h-5 px-1.5 flex items-center justify-center">{totalUnidadesCarrito}</span>
+        </button>
+      )}
+
+      <CarritoVentaModal abierto={carritoAbierto} items={carrito} productos={productos} clientes={clientes}
+        onCambiarCantidad={cambiarCantidadCarrito} onQuitar={quitarDelCarrito}
+        onConfirmar={confirmarVentaCarrito} onCerrar={() => setCarritoAbierto(false)} procesando={procesandoVenta} />
+
       <ModalVentaCantidad producto={productoVentaCantidad} guardando={vendiendo} onConfirmar={confirmarVentaCantidad} onCerrar={() => setProductoVentaCantidad(null)} />
       <ModalAccionesProducto producto={productoMenu}
         onEditar={() => { abrirEditar(productoMenu); setProductoMenu(null); }}
@@ -4344,7 +4509,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
 
   const paginas = {
     dashboard: <PaginaDashboard productos={productos} stockBajo={stockBajo} valorStock={valorStock} gananciaAcumulada={gananciaAcumulada} unidadesVendidas={unidadesVendidas} totalPorCobrar={totalPorCobrar} clientesPendientes={clientesPendientes} recuperadoMes={recuperadoMes} verGanancias={permisos.ver_ganancias} onIrA={setPagina} />,
-    inventario: <PaginaInventario productos={productos} cargando={cargando} error={error} onRecargar={cargarProductos} onCrear={handleCrear} onActualizar={handleActualizar} onEliminar={handleEliminar} onVentaRegistrada={handleRegistrarVenta} verCostos={permisos.ver_costos} puedeEditar={permisos.editar} />,
+    inventario: <PaginaInventario productos={productos} clientes={clientes} cargando={cargando} error={error} onRecargar={cargarProductos} onCrear={handleCrear} onActualizar={handleActualizar} onEliminar={handleEliminar} onVentaRegistrada={handleRegistrarVenta} onCrearFiado={handleCrearFiado} verCostos={permisos.ver_costos} puedeEditar={permisos.editar} />,
     caja: <PaginaCaja />,
     perdidas: <PaginaPerdidas productos={productos} onActualizarProducto={handleActualizar} onRecargarProductos={cargarProductos} />,
     historial: <PaginaHistorial productos={productos} onActualizarProducto={handleActualizar} onRecargarProductos={cargarProductos} />,
