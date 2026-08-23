@@ -320,6 +320,57 @@ async function conAlternativaOffline(operacionReal, tipoPendiente, payload, apli
   }
 }
 
+// --- Notificaciones propias de la app (reemplazan al mostrarError() feo del navegador) ---
+let toastsGlobal = [];
+let listenersToast = [];
+let toastIdSeq = 1;
+function notificarToasts() {
+  listenersToast.forEach(fn => { try { fn([...toastsGlobal]); } catch (e) {} });
+}
+function quitarToast(id) {
+  toastsGlobal = toastsGlobal.filter(t => t.id !== id);
+  notificarToasts();
+}
+function mostrarError(mensaje) {
+  const id = toastIdSeq++;
+  toastsGlobal = [...toastsGlobal, { id, mensaje: String(mensaje), tipo: "error" }];
+  notificarToasts();
+  setTimeout(() => quitarToast(id), 5000);
+}
+function mostrarAviso(mensaje) {
+  const id = toastIdSeq++;
+  toastsGlobal = [...toastsGlobal, { id, mensaje: String(mensaje), tipo: "exito" }];
+  notificarToasts();
+  setTimeout(() => quitarToast(id), 3500);
+}
+
+function ToastContainer() {
+  const [toasts, setToasts] = useState(toastsGlobal);
+  useEffect(() => {
+    const fn = (lista) => setToasts(lista);
+    listenersToast.push(fn);
+    return () => { listenersToast = listenersToast.filter(l => l !== fn); };
+  }, []);
+  if (toasts.length === 0) return null;
+  return (
+    <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[100] flex flex-col gap-2 w-[calc(100%-24px)] max-w-sm px-1 pointer-events-none">
+      {toasts.map((t) => {
+        const esError = t.tipo === "error";
+        return (
+          <div key={t.id}
+            className={`pointer-events-auto flex items-start gap-2.5 rounded-xl shadow-lg border p-3 bg-white dark:bg-black ${esError ? "border-rose-200 dark:border-rose-900/40" : "border-emerald-200 dark:border-emerald-900/40"}`}>
+            <span className={`shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-sm ${esError ? "bg-rose-50 dark:bg-rose-900/30 text-rose-500" : "bg-emerald-50 dark:bg-emerald-900/30 text-emerald-500"}`}>
+              {esError ? "!" : "✓"}
+            </span>
+            <span className="text-sm text-slate-700 dark:text-white flex-1 leading-snug pt-0.5">{t.mensaje}</span>
+            <button onClick={() => quitarToast(t.id)} className="text-slate-300 dark:text-white/30 text-sm leading-none shrink-0 pt-1">✕</button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function IndicadorConexion() {
   const [estado, setEstado] = useState(estadoConexionGlobal);
   useEffect(() => {
@@ -1181,7 +1232,7 @@ function ModalHistorialCliente({ abierto, cliente, pagos, onCerrar, onEditarFiad
       await onEditarFiado(fiado, items);
       setFiadoEditando(null);
       recargar();
-    } catch (e) { alert(e.message); }
+    } catch (e) { mostrarError(e.message); }
     finally { setGuardando(false); }
   };
 
@@ -1190,7 +1241,7 @@ function ModalHistorialCliente({ abierto, cliente, pagos, onCerrar, onEditarFiad
     try {
       await onEliminarFiado(f);
       recargar();
-    } catch (e) { alert(e.message); }
+    } catch (e) { mostrarError(e.message); }
   };
 
   return (
@@ -1291,14 +1342,14 @@ function ModalNuevoFiado({ abierto, clientes, productos, clientePreseleccionado,
     const cant = parseFloat(cantidadSel) || 0;
     if (!producto || cant <= 0) return;
     const ok = agregarProductoALista(producto, cant);
-    if (!ok) { alert(`Solo hay ${producto.cantidad} unidades de ${producto.nombre} en stock.`); return; }
+    if (!ok) { mostrarError(`Solo hay ${producto.cantidad} unidades de ${producto.nombre} en stock.`); return; }
     setProductoSel(null); setCantidadSel("1"); setBusquedaProducto("");
   };
 
   const agregarItemExterno = () => {
     const cant = parseFloat(cantidadExterno) || 0;
     const precio = parseFloat(precioExterno) || 0;
-    if (!nombreExterno.trim() || cant <= 0 || precio <= 0) { alert("Completá nombre, cantidad y precio."); return; }
+    if (!nombreExterno.trim() || cant <= 0 || precio <= 0) { mostrarError("Completá nombre, cantidad y precio."); return; }
     setItems(prev => [...prev, { producto_id: null, nombre: nombreExterno.trim(), cantidad: cant, precio_unitario: precio, tipo: "externo" }]);
     setNombreExterno(""); setCantidadExterno("1"); setPrecioExterno("");
   };
@@ -1446,13 +1497,13 @@ function ModalNuevoFiado({ abierto, clientes, productos, clientePreseleccionado,
   const resolverManual = (i, producto) => {
     const item = noResueltos[i];
     const ok = agregarProductoALista(producto, item.cantidad);
-    if (!ok) { alert(`Solo hay ${producto.cantidad} unidades de ${producto.nombre} en stock.`); return; }
+    if (!ok) { mostrarError(`Solo hay ${producto.cantidad} unidades de ${producto.nombre} en stock.`); return; }
     setNoResueltos(noResueltos.filter((_, idx) => idx !== i));
   };
 
   const resolverComoExterno = (i) => {
     const item = noResueltos[i];
-    if (!item.precio) { alert("No reconocí el precio de este — agregalo como externo a mano abajo."); return; }
+    if (!item.precio) { mostrarError("No reconocí el precio de este — agregalo como externo a mano abajo."); return; }
     setItems(prev => [...prev, { producto_id: null, nombre: item.nombreCrudo, cantidad: item.cantidad, precio_unitario: item.precio / item.cantidad, tipo: "externo" }]);
     setNoResueltos(noResueltos.filter((_, idx) => idx !== i));
   };
@@ -1658,7 +1709,7 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
       if (clienteEditando) await onActualizarCliente(clienteEditando.id, { nombre: form.nombre.trim(), telefono: form.telefono.trim() });
       else await onCrearCliente({ nombre: form.nombre.trim(), telefono: form.telefono.trim(), saldo_pendiente: 0 });
       setModalCliente(false); setClienteEditando(null);
-    } catch (e) { alert(e.message); }
+    } catch (e) { mostrarError(e.message); }
     finally { setGuardando(false); }
   };
 
@@ -1667,7 +1718,7 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
     try {
       await onCrearFiado(datos);
       setModalFiado(false);
-    } catch (e) { alert(e.message); }
+    } catch (e) { mostrarError(e.message); }
     finally { setGuardando(false); }
   };
 
@@ -1676,7 +1727,7 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
     try {
       await onRegistrarPago(clienteAbono, monto);
       setClienteAbono(null);
-    } catch (e) { alert(e.message); }
+    } catch (e) { mostrarError(e.message); }
     finally { setGuardando(false); }
   };
 
@@ -1684,7 +1735,7 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
     if (!confirm(`¿Eliminar a ${cliente.nombre}? Esto borra su historial de fiados y pagos, y devuelve al inventario los productos de sus fiados pendientes. No se puede deshacer.`)) return;
     setEliminandoId(cliente.id);
     try { await onEliminarCliente(cliente); }
-    catch (e) { alert(e.message); }
+    catch (e) { mostrarError(e.message); }
     finally { setEliminandoId(null); }
   };
 
@@ -1764,23 +1815,23 @@ function TarjetaLoteActivo({ lote, productos, onAgregarIngrediente, onFinalizar,
 
   const agregarDelInventario = async () => {
     const cant = parseFloat(cantidadIng) || 0;
-    if (!ingredienteInv || cant <= 0) { alert("Elegí un ingrediente del inventario y una cantidad."); return; }
+    if (!ingredienteInv || cant <= 0) { mostrarError("Elegí un ingrediente del inventario y una cantidad."); return; }
     setGuardandoIng(true);
     try {
       await onAgregarIngrediente(lote, { tipo: "inventario", producto_id: ingredienteInv.id, nombre: ingredienteInv.nombre, cantidad: cant, unidad: "u." });
       setIngredienteInv(null); setBusquedaIng(""); setCantidadIng("");
-    } catch (e) { alert(e.message); }
+    } catch (e) { mostrarError(e.message); }
     finally { setGuardandoIng(false); }
   };
 
   const agregarNuevo = async () => {
     const cant = parseFloat(cantidadNuevoIng) || 0;
-    if (!nombreNuevoIng.trim() || cant <= 0) { alert("Escribí el nombre del ingrediente y una cantidad."); return; }
+    if (!nombreNuevoIng.trim() || cant <= 0) { mostrarError("Escribí el nombre del ingrediente y una cantidad."); return; }
     setGuardandoIng(true);
     try {
       await onAgregarIngrediente(lote, { tipo: "nuevo", producto_id: null, nombre: nombreNuevoIng.trim(), cantidad: cant, unidad: unidadNuevoIng });
       setNombreNuevoIng(""); setCantidadNuevoIng(""); setUnidadNuevoIng("unidad");
-    } catch (e) { alert(e.message); }
+    } catch (e) { mostrarError(e.message); }
     finally { setGuardandoIng(false); }
   };
 
@@ -1788,7 +1839,7 @@ function TarjetaLoteActivo({ lote, productos, onAgregarIngrediente, onFinalizar,
     setFinalizando(true);
     try {
       await onFinalizar(lote, unidadesFinal ? parseFloat(unidadesFinal) : null);
-    } catch (e) { alert(e.message); }
+    } catch (e) { mostrarError(e.message); }
     finally { setFinalizando(false); }
   };
 
@@ -1893,18 +1944,18 @@ function PaginaProduccion({ productos, lotes, cargando, error, onIniciar, onAgre
   const [iniciando, setIniciando] = useState(false);
 
   const iniciarLote = async () => {
-    if (!nombreNuevoLote.trim()) { alert("Escribí qué producto vas a preparar."); return; }
+    if (!nombreNuevoLote.trim()) { mostrarError("Escribí qué producto vas a preparar."); return; }
     setIniciando(true);
     try {
       await onIniciar(nombreNuevoLote.trim());
       setNombreNuevoLote("");
-    } catch (e) { alert(e.message); }
+    } catch (e) { mostrarError(e.message); }
     finally { setIniciando(false); }
   };
 
   const eliminarLote = async (l) => {
     if (!confirm(`¿Eliminar el lote de ${l.producto_nombre}?`)) return;
-    try { await onEliminar(l.id); } catch (e) { alert(e.message); }
+    try { await onEliminar(l.id); } catch (e) { mostrarError(e.message); }
   };
 
   const enProceso = lotes.filter(l => l.estado === "en_proceso");
@@ -1987,13 +2038,13 @@ function PaginaConsumoHogar({ productos, registros, cargando, error, onRegistrar
   const costoTotal = costoUnitario * cantidadNum;
 
   const registrar = async () => {
-    if (!producto || cantidadNum <= 0) { alert("Elegí un producto y una cantidad mayor a 0"); return; }
-    if (cantidadNum > producto.cantidad) { alert(`Solo hay ${producto.cantidad} unidades de ${producto.nombre} en stock.`); return; }
+    if (!producto || cantidadNum <= 0) { mostrarError("Elegí un producto y una cantidad mayor a 0"); return; }
+    if (cantidadNum > producto.cantidad) { mostrarError(`Solo hay ${producto.cantidad} unidades de ${producto.nombre} en stock.`); return; }
     setGuardando(true);
     try {
       await onRegistrar({ producto, cantidad: cantidadNum, nota: nota.trim() });
       setProductoId(""); setCantidad(""); setNota("");
-    } catch (e) { alert(e.message); }
+    } catch (e) { mostrarError(e.message); }
     finally { setGuardando(false); }
   };
 
@@ -2001,7 +2052,7 @@ function PaginaConsumoHogar({ productos, registros, cargando, error, onRegistrar
     if (!confirm(`¿Eliminar este consumo de ${registro.producto_nombre}? Se devuelve la cantidad al inventario. No se puede deshacer.`)) return;
     setEliminandoId(registro.id);
     try { await onEliminar(registro); }
-    catch (e) { alert(e.message); }
+    catch (e) { mostrarError(e.message); }
     finally { setEliminandoId(null); }
   };
 
@@ -2169,19 +2220,19 @@ function PaginaUsuarios({ nombreNegocio }) {
       await cargar();
       const nuevo = creado && creado[0];
       if (nuevo && nuevo.telefono) window.open(enlaceWhatsapp(nuevo), "_blank");
-    } catch (e) { alert(e.message); }
+    } catch (e) { mostrarError(e.message); }
     finally { setGuardando(false); }
   };
 
   const cambiarRol = async (miembro, rol) => {
     try { await supaApi.actualizarMiembro(miembro.id, { rol }); await cargar(); }
-    catch (e) { alert(e.message); }
+    catch (e) { mostrarError(e.message); }
   };
 
   const quitarAcceso = async (miembro) => {
     if (!confirm(`¿Quitar el acceso de ${miembro.nombre || miembro.correo}?`)) return;
     try { await supaApi.eliminarMiembro(miembro.id); await cargar(); }
-    catch (e) { alert(e.message); }
+    catch (e) { mostrarError(e.message); }
   };
 
   const enlaceWhatsapp = (m) => {
@@ -2371,19 +2422,19 @@ function PaginaCaja() {
       else await supaApi.actualizarMovimiento(mov.id, cambios);
       setMovimientoEditando(null);
       await cargarTodo();
-    } catch (e) { alert(e.message); }
+    } catch (e) { mostrarError(e.message); }
     finally { setGuardandoEdicion(false); }
   };
 
   const guardarMontoInicial = async () => {
     const nuevo = parseFloat(montoInicialEditar);
-    if (isNaN(nuevo) || nuevo < 0) { alert("Poné un monto válido."); return; }
+    if (isNaN(nuevo) || nuevo < 0) { mostrarError("Poné un monto válido."); return; }
     setGuardandoMontoInicial(true);
     try {
       await supaApi.actualizarSesionCaja(sesion.id, { monto_inicial: nuevo });
       setPanelAbierto(null);
       await cargarTodo();
-    } catch (e) { alert(e.message); }
+    } catch (e) { mostrarError(e.message); }
     finally { setGuardandoMontoInicial(false); }
   };
 
@@ -2429,9 +2480,9 @@ function PaginaCaja() {
 
   const abrirCaja = async () => {
     const monto = parseFloat(montoApertura) || 0;
-    if (monto <= 0) { alert("Poné un monto mayor a 0"); return; }
+    if (monto <= 0) { mostrarError("Poné un monto mayor a 0"); return; }
     if (monto > saldoGuardado) {
-      alert(`No hay suficiente dinero guardado para abrir con C$${monto.toFixed(2)}. Guardado actual: C$${saldoGuardado.toFixed(2)}. Editá el dinero guardado primero si hace falta.`);
+      mostrarError(`No hay suficiente dinero guardado para abrir con C$${monto.toFixed(2)}. Guardado actual: C$${saldoGuardado.toFixed(2)}. Editá el dinero guardado primero si hace falta.`);
       return;
     }
     setProcesando(true);
@@ -2441,19 +2492,19 @@ function PaginaCaja() {
       setMontoApertura("");
       setFechaApertura(new Date().toISOString().slice(0, 10));
       await cargarTodo();
-    } catch (e) { alert(e.message); }
+    } catch (e) { mostrarError(e.message); }
     finally { setProcesando(false); }
   };
 
   const registrarMovimiento = async () => {
     const monto = parseFloat(nuevoMonto) || 0;
-    if (monto <= 0) { alert("Poné un monto mayor a 0"); return; }
+    if (monto <= 0) { mostrarError("Poné un monto mayor a 0"); return; }
     setProcesando(true);
     try {
       await supaApi.crearMovimiento({ sesion_id: sesion.id, tipo: nuevoTipo, descripcion: nuevaDescripcion.trim(), monto });
       setNuevaDescripcion(""); setNuevoMonto("");
       await cargarTodo();
-    } catch (e) { alert(e.message); }
+    } catch (e) { mostrarError(e.message); }
     finally { setProcesando(false); }
   };
 
@@ -2464,33 +2515,33 @@ function PaginaCaja() {
 
   const confirmarCierre = async () => {
     const montoFinal = parseFloat(montoFinalContado);
-    if (isNaN(montoFinal) || montoFinal < 0) { alert("Poné el saldo final contado."); return; }
+    if (isNaN(montoFinal) || montoFinal < 0) { mostrarError("Poné el saldo final contado."); return; }
     setProcesando(true);
     try {
       await supaApi.cerrarCaja(sesion.id, montoFinal);
       setMostrarCierre(false);
       await cargarTodo();
-    } catch (e) { alert(e.message); }
+    } catch (e) { mostrarError(e.message); }
     finally { setProcesando(false); }
   };
 
   const eliminarMovimiento = async (m) => {
     if (!confirm("¿Eliminar este movimiento? No se puede deshacer.")) return;
     try { await supaApi.eliminarMovimiento(m.id); await cargarTodo(); }
-    catch (e) { alert(e.message); }
+    catch (e) { mostrarError(e.message); }
   };
 
   const eliminarSesionHistorial = async (h) => {
     if (!confirm("¿Eliminar esta caja del historial? No se puede deshacer.")) return;
     try { await supaApi.eliminarSesionCaja(h.id); await cargarTodo(); }
-    catch (e) { alert(e.message); }
+    catch (e) { mostrarError(e.message); }
   };
 
   const moverDineroGuardado = async () => {
     const monto = parseFloat(montoGuardado) || 0;
-    if (monto <= 0) { alert("Poné un monto mayor a 0"); return; }
-    if (tipoGuardado === "retiro" && monto > saldoActual) { alert(`No hay suficiente dinero en la caja. Saldo actual: C$${saldoActual.toFixed(2)}`); return; }
-    if (tipoGuardado === "ingreso" && monto > saldoGuardado) { alert(`No hay suficiente dinero guardado. Guardado actual: C$${saldoGuardado.toFixed(2)}`); return; }
+    if (monto <= 0) { mostrarError("Poné un monto mayor a 0"); return; }
+    if (tipoGuardado === "retiro" && monto > saldoActual) { mostrarError(`No hay suficiente dinero en la caja. Saldo actual: C$${saldoActual.toFixed(2)}`); return; }
+    if (tipoGuardado === "ingreso" && monto > saldoGuardado) { mostrarError(`No hay suficiente dinero guardado. Guardado actual: C$${saldoGuardado.toFixed(2)}`); return; }
     setProcesandoGuardado(true);
     try {
       const desc = descGuardado.trim() || (tipoGuardado === "retiro" ? "Retiro hacia dinero guardado" : "Ingreso desde dinero guardado");
@@ -2500,14 +2551,14 @@ function PaginaCaja() {
       await supaApi.crearMovimientoGuardado({ tipo: tipoGuardado, monto, descripcion: desc });
       setMontoGuardado(""); setDescGuardado("");
       await cargarTodo();
-    } catch (e) { alert(e.message); }
+    } catch (e) { mostrarError(e.message); }
     finally { setProcesandoGuardado(false); }
   };
 
   const eliminarMovimientoGuardado = async (m) => {
     if (!confirm("¿Eliminar este movimiento de dinero guardado? Esto no afecta el saldo de la caja, solo corrige el registro de guardado.")) return;
     try { await supaApi.eliminarMovimientoGuardado(m.id); await cargarTodo(); }
-    catch (e) { alert(e.message); }
+    catch (e) { mostrarError(e.message); }
   };
 
   // Ajuste directo del saldo guardado — no depende de que la caja esté abierta,
@@ -2526,7 +2577,7 @@ function PaginaCaja() {
       setEditandoGuardado(false);
       setNuevoMontoGuardado("");
       await cargarTodo();
-    } catch (e) { alert(e.message); }
+    } catch (e) { mostrarError(e.message); }
     finally { setGuardandoAjusteGuardado(false); }
   };
 
@@ -2537,7 +2588,7 @@ function PaginaCaja() {
     try {
       await supaApi.crearMovimientoGuardado({ tipo: "ingreso", monto: saldoGuardado, descripcion: "Guardado puesto en cero" });
       await cargarTodo();
-    } catch (e) { alert(e.message); }
+    } catch (e) { mostrarError(e.message); }
     finally { setGuardandoAjusteGuardado(false); }
   };
 
@@ -2889,8 +2940,8 @@ function PaginaPerdidas({ productos, onActualizarProducto, onRecargarProductos }
   const valorPerdido = productoSeleccionado ? productoSeleccionado.costo * cantidadNum : 0;
 
   const registrar = async () => {
-    if (!productoSeleccionado) { alert("Elegí un producto"); return; }
-    if (cantidadNum <= 0) { alert("Poné una cantidad mayor a 0"); return; }
+    if (!productoSeleccionado) { mostrarError("Elegí un producto"); return; }
+    if (cantidadNum <= 0) { mostrarError("Poné una cantidad mayor a 0"); return; }
     setProcesando(true);
     try {
       await supaApi.registrarPerdida({
@@ -2905,7 +2956,7 @@ function PaginaPerdidas({ productos, onActualizarProducto, onRecargarProductos }
       setProductoId(""); setCantidad("");
       await cargar();
       await onRecargarProductos();
-    } catch (e) { alert(e.message); }
+    } catch (e) { mostrarError(e.message); }
     finally { setProcesando(false); }
   };
 
@@ -2919,7 +2970,7 @@ function PaginaPerdidas({ productos, onActualizarProducto, onRecargarProductos }
       await supaApi.eliminarPerdida(p.id);
       await cargar();
       await onRecargarProductos();
-    } catch (e) { alert(e.message); }
+    } catch (e) { mostrarError(e.message); }
   };
 
   return (
@@ -3110,7 +3161,7 @@ function SeccionEntradasInventario({ producto, onActualizarProducto, onRecargarP
 
   const agregarEntrada = async () => {
     const cant = parseFloat(cantidad);
-    if (isNaN(cant) || cant === 0) { alert("Escribí una cantidad distinta de 0."); return; }
+    if (isNaN(cant) || cant === 0) { mostrarError("Escribí una cantidad distinta de 0."); return; }
     setGuardando(true);
     try {
       await supaApi.crearEntradaInventario({ producto_id: producto.id, cantidad: cant, tipo, fecha, nota: nota.trim() || null });
@@ -3120,13 +3171,13 @@ function SeccionEntradasInventario({ producto, onActualizarProducto, onRecargarP
       setCantidad(""); setNota(""); setTipo("compra"); setFecha(new Date().toISOString().slice(0, 10));
       await cargar();
       await onRecargarProductos();
-    } catch (e) { alert(e.message); }
+    } catch (e) { mostrarError(e.message); }
     finally { setGuardando(false); }
   };
 
   const guardarEdicion = async (form) => {
     const nuevaCant = parseFloat(form.cantidad);
-    if (isNaN(nuevaCant) || nuevaCant === 0) { alert("Escribí una cantidad distinta de 0."); return; }
+    if (isNaN(nuevaCant) || nuevaCant === 0) { mostrarError("Escribí una cantidad distinta de 0."); return; }
     setGuardando(true);
     try {
       const delta = nuevaCant - entradaEditando.cantidad;
@@ -3137,7 +3188,7 @@ function SeccionEntradasInventario({ producto, onActualizarProducto, onRecargarP
       setEntradaEditando(null);
       await cargar();
       await onRecargarProductos();
-    } catch (e) { alert(e.message); }
+    } catch (e) { mostrarError(e.message); }
     finally { setGuardando(false); }
   };
 
@@ -3151,7 +3202,7 @@ function SeccionEntradasInventario({ producto, onActualizarProducto, onRecargarP
       setCantidadActual(nuevoStock);
       await cargar();
       await onRecargarProductos();
-    } catch (err) { alert(err.message); }
+    } catch (err) { mostrarError(err.message); }
     finally { setGuardando(false); }
   };
 
@@ -3310,7 +3361,7 @@ function TarjetaProductoGrid({ producto, puedeEditar, verCostos, cantidadEnCarri
     try {
       const dataUrl = await comprimirImagen(archivo);
       await onImagenChange(producto, dataUrl);
-    } catch (err) { alert(err.message); }
+    } catch (err) { mostrarError(err.message); }
     finally { setSubiendoFoto(false); }
   };
 
@@ -3318,7 +3369,7 @@ function TarjetaProductoGrid({ producto, puedeEditar, verCostos, cantidadEnCarri
     setMenuFotoAbierto(false);
     setSubiendoFoto(true);
     try { await onImagenChange(producto, null); }
-    catch (err) { alert(err.message); }
+    catch (err) { mostrarError(err.message); }
     finally { setSubiendoFoto(false); }
   };
 
@@ -3533,7 +3584,7 @@ function PaginaInventario({ productos, clientes = [], cargando, error, onRecarga
         await onCrear(datos);
       }
       setModalAbierto(false);
-    } catch (e) { alert(e.message); }
+    } catch (e) { mostrarError(e.message); }
     finally { setGuardando(false); }
   };
 
@@ -3553,7 +3604,7 @@ function PaginaInventario({ productos, clientes = [], cargando, error, onRecarga
     try {
       await vender(p, cant);
       setProductoVentaCantidad(null);
-    } catch (e) { alert(e.message); }
+    } catch (e) { mostrarError(e.message); }
     finally { setVendiendo(false); }
   };
 
@@ -3602,7 +3653,7 @@ function PaginaInventario({ productos, clientes = [], cargando, error, onRecarga
       }
       setCarrito({});
       setCarritoAbierto(false);
-    } catch (e) { alert(e.message); }
+    } catch (e) { mostrarError(e.message); }
     finally { setProcesandoVenta(false); }
   };
 
@@ -3719,7 +3770,7 @@ function PaginaHistorial({ productos, onActualizarProducto, onRecargarProductos 
   useEffect(() => { cargar(); }, [cargar]);
 
   const eliminarEvento = async (e) => {
-    if (e.tipo === "producto_agregado") { alert("Para eliminar un producto, hacelo desde Inventario."); return; }
+    if (e.tipo === "producto_agregado") { mostrarError("Para eliminar un producto, hacelo desde Inventario."); return; }
     if (!confirm("¿Eliminar este registro? No se puede deshacer.")) return;
     try {
       if (e.tipo === "venta") {
@@ -3742,7 +3793,7 @@ function PaginaHistorial({ productos, onActualizarProducto, onRecargarProductos 
         await supaApi.eliminarMovimiento(e.raw.id);
       }
       await cargar();
-    } catch (err) { alert(err.message); }
+    } catch (err) { mostrarError(err.message); }
   };
 
   const tiposLabel = {
@@ -4308,7 +4359,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
       const dataUrl = await comprimirImagen(archivo, 500, 0.75);
       setLogo(dataUrl);
       await supaApi.guardarConfigNegocio({ logo: dataUrl });
-    } catch (err) { alert(err.message); }
+    } catch (err) { mostrarError(err.message); }
   };
   const quitarLogo = () => {
     setLogo(null);
@@ -4333,7 +4384,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
       const dataUrl = await comprimirImagen(archivo, 500, 0.75);
       setFotoPerfil(dataUrl);
       await supaApi.guardarMiPerfil({ foto: dataUrl });
-    } catch (err) { alert(err.message); }
+    } catch (err) { mostrarError(err.message); }
   };
   const quitarFotoPerfil = () => {
     setFotoPerfil(null);
@@ -4473,7 +4524,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
     if (sesionAbierta) {
       await supaApi.crearMovimiento({ sesion_id: sesionAbierta.id, tipo: "ingreso", descripcion: `Abono de fiado — ${cliente.nombre}`, monto });
     } else {
-      alert("El pago se registró, pero no hay una caja abierta ahora mismo — abrí la caja para que este ingreso se sume ahí.");
+      mostrarError("El pago se registró, pero no hay una caja abierta ahora mismo — abrí la caja para que este ingreso se sume ahí.");
     }
     await cargarCuentasPorCobrar();
   };
@@ -4720,7 +4771,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+ReactDOM.createRoot(document.getElementById("root")).render(<><App /><ToastContainer /></>);
 </script>
 <script>
   var __codigoFuente = document.getElementById("app-source").textContent;
