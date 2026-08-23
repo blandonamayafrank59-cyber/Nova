@@ -3227,13 +3227,24 @@ function ModalProducto({ abierto, producto, onGuardar, onCerrar, guardando, onAc
   );
 }
 
+function IconCamaraMini({ className = "w-3 h-3" }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+      <circle cx="12" cy="13" r="4" />
+    </svg>
+  );
+}
+
 function TarjetaProductoGrid({ producto, puedeEditar, verCostos, cantidadEnCarrito, onAgregar, onAbrirMenu, onImagenChange }) {
   const [subiendoFoto, setSubiendoFoto] = useState(false);
+  const [menuFotoAbierto, setMenuFotoAbierto] = useState(false);
   const bajo = producto.cantidad <= producto.minimo;
   const inicial = producto.nombre.trim().charAt(0).toUpperCase() || "?";
   const sinStock = producto.cantidad <= 0;
   const margen = producto.costo > 0 ? ((producto.venta - producto.costo) / producto.costo * 100).toFixed(0) : 0;
-  const inputId = `foto-producto-${producto.id}`;
+  const idCamara = `foto-camara-${producto.id}`;
+  const idGaleria = `foto-galeria-${producto.id}`;
 
   const elegirFoto = async (e) => {
     const archivo = e.target.files && e.target.files[0];
@@ -3250,23 +3261,59 @@ function TarjetaProductoGrid({ producto, puedeEditar, verCostos, cantidadEnCarri
     lector.readAsDataURL(archivo);
   };
 
+  const quitarFoto = async () => {
+    setMenuFotoAbierto(false);
+    setSubiendoFoto(true);
+    try { await onImagenChange(producto, null); }
+    catch (err) { alert(err.message); }
+    finally { setSubiendoFoto(false); }
+  };
+
   return (
     <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl p-3 flex flex-col gap-2">
       <div className="flex items-start justify-between gap-2">
         {puedeEditar ? (
-          <label htmlFor={inputId} className="relative w-12 h-12 rounded-xl bg-[#16233D]/5 dark:bg-white/5 flex items-center justify-center shrink-0 overflow-hidden cursor-pointer">
-            {producto.imagen ? (
-              <img src={producto.imagen} alt={producto.nombre} className="w-full h-full object-cover" />
-            ) : (
-              <span className="text-lg font-bold text-[#16233D]/50 dark:text-white/40 font-display">{inicial}</span>
+          <>
+            <button type="button" onClick={() => setMenuFotoAbierto(true)}
+              className="relative w-12 h-12 rounded-xl bg-[#16233D]/5 dark:bg-white/5 flex items-center justify-center shrink-0 overflow-hidden">
+              {producto.imagen ? (
+                <img src={producto.imagen} alt={producto.nombre} className="w-full h-full object-cover" />
+              ) : (
+                <span className="text-lg font-bold text-[#16233D]/50 dark:text-white/40 font-display">{inicial}</span>
+              )}
+              {subiendoFoto && (
+                <div className="absolute inset-0 bg-black/40 flex items-center justify-center"><IconLoading className="text-white" /></div>
+              )}
+              <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-[#E3A73B] text-[#16233D] border-2 border-white dark:border-black shadow-sm flex items-center justify-center">
+                <IconCamaraMini className="w-2.5 h-2.5" />
+              </span>
+            </button>
+            <input id={idCamara} type="file" accept="image/*" capture="environment" onChange={elegirFoto} className="hidden" />
+            <input id={idGaleria} type="file" accept="image/*" onChange={elegirFoto} className="hidden" />
+            {menuFotoAbierto && (
+              <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-40" onClick={() => setMenuFotoAbierto(false)}>
+                <div onClick={(e) => e.stopPropagation()} className="bg-white dark:bg-black rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-xs">
+                  <div className="font-semibold text-slate-800 dark:text-white mb-3 font-display truncate">Foto de {producto.nombre}</div>
+                  <div className="space-y-1.5">
+                    <label htmlFor={idCamara} onClick={() => setMenuFotoAbierto(false)}
+                      className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5 cursor-pointer">
+                      <IconCamaraMini className="w-4.5 h-4.5 shrink-0" /> Tomar foto
+                    </label>
+                    <label htmlFor={idGaleria} onClick={() => setMenuFotoAbierto(false)}
+                      className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5 cursor-pointer">
+                      🖼️ Elegir de galería
+                    </label>
+                    {producto.imagen && (
+                      <button onClick={quitarFoto} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/10 flex items-center gap-2.5">
+                        🗑️ Quitar foto
+                      </button>
+                    )}
+                  </div>
+                  <button onClick={() => setMenuFotoAbierto(false)} className="w-full mt-3 px-3 py-2.5 rounded-lg text-sm font-medium border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white">Cancelar</button>
+                </div>
+              </div>
             )}
-            {subiendoFoto ? (
-              <div className="absolute inset-0 bg-black/40 flex items-center justify-center"><IconLoading className="text-white" /></div>
-            ) : (
-              <div className="absolute bottom-0 right-0 w-4.5 h-4.5 min-w-[18px] h-[18px] rounded-full bg-[#16233D] text-white text-[10px] flex items-center justify-center">📷</div>
-            )}
-            <input id={inputId} type="file" accept="image/*" onChange={elegirFoto} className="hidden" />
-          </label>
+          </>
         ) : (
           <div className="w-12 h-12 rounded-xl bg-[#16233D]/5 dark:bg-white/5 flex items-center justify-center shrink-0 overflow-hidden">
             {producto.imagen ? (
