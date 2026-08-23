@@ -630,6 +630,36 @@ const supaApi = {
     return datos[0] || null;
   },
 
+  // --- Configuración del negocio (nombre y logo, compartidos entre todos los dispositivos/usuarios del negocio) ---
+  async obtenerConfigNegocio() {
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/negocio_config?select=*&limit=1`);
+    if (!res.ok) return null;
+    const datos = await res.json();
+    return datos[0] || null;
+  },
+  async guardarConfigNegocio(cambios) {
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/negocio_config?on_conflict=negocio_id`, {
+      method: "POST", extraHeaders: { Prefer: "resolution=merge-duplicates,return=representation" }, body: JSON.stringify(cambios),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo guardar la configuración del negocio"); }
+    return res.json();
+  },
+
+  // --- Perfil del usuario (nombre y foto, siguen a la cuenta en cualquier dispositivo) ---
+  async obtenerMiPerfil() {
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/perfiles_usuario?select=*&limit=1`);
+    if (!res.ok) return null;
+    const datos = await res.json();
+    return datos[0] || null;
+  },
+  async guardarMiPerfil(cambios) {
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/perfiles_usuario?on_conflict=user_id`, {
+      method: "POST", extraHeaders: { Prefer: "resolution=merge-duplicates,return=representation" }, body: JSON.stringify(cambios),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo guardar tu perfil"); }
+    return res.json();
+  },
+
   // --- Producción por lotes (registro progresivo) ---
   async listarLotes(limite = 100) {
     const res = await peticionApi(`${SUPABASE_URL}/rest/v1/lotes?select=*&order=creado_en.desc&limit=${limite}`);
@@ -3932,18 +3962,38 @@ function AppInterna({ sesion, onCerrarSesion }) {
     catch (e) {}
   }, [modoOscuro]);
   const [sidebarAbierto, setSidebarAbierto] = useState(false);
-  const [nombreNegocio, setNombreNegocio] = useState(() => {
-    try { return localStorage.getItem("mi_negocio_nombre") || ""; }
-    catch (e) { return ""; }
+  const [nombreNegocio, setNombreNegocio] = useState("");
+  const [logo, setLogo] = useState(null);
+  const [nombreUsuario, setNombreUsuario] = useState(() => {
+    const email = sesion?.user?.email || "";
+    return email ? email.split("@")[0] : "";
   });
+  const [fotoPerfil, setFotoPerfil] = useState(null);
+  const cargaInicialRef = React.useRef(false);
+
   useEffect(() => {
-    try { localStorage.setItem("mi_negocio_nombre", nombreNegocio); }
-    catch (e) {}
+    (async () => {
+      try {
+        const [config, perfil] = await Promise.all([supaApi.obtenerConfigNegocio(), supaApi.obtenerMiPerfil()]);
+        if (config) { setNombreNegocio(config.nombre || ""); setLogo(config.logo || null); }
+        if (perfil) {
+          if (perfil.nombre) setNombreUsuario(perfil.nombre);
+          setFotoPerfil(perfil.foto || null);
+        }
+      } catch (e) { /* si falla, se sigue con los valores por defecto */ }
+      finally { cargaInicialRef.current = true; }
+    })();
+  }, []);
+
+  // Nombre del negocio: se guarda en Supabase (compartido entre todos los dispositivos), con una pequeña espera para no mandar una petición por cada letra
+  useEffect(() => {
+    if (!cargaInicialRef.current) return;
+    const espera = setTimeout(() => {
+      supaApi.guardarConfigNegocio({ nombre: nombreNegocio }).catch(() => {});
+    }, 800);
+    return () => clearTimeout(espera);
   }, [nombreNegocio]);
-  const [logo, setLogo] = useState(() => {
-    try { return localStorage.getItem("mi_negocio_logo") || null; }
-    catch (e) { return null; }
-  });
+
   const logoInputRef = React.useRef(null);
   const handleLogoChange = (e) => {
     const archivo = e.target.files && e.target.files[0];
@@ -3955,30 +4005,24 @@ function AppInterna({ sesion, onCerrarSesion }) {
     const lector = new FileReader();
     lector.onload = () => {
       setLogo(lector.result);
-      try { localStorage.setItem("mi_negocio_logo", lector.result); } catch (err) {}
+      supaApi.guardarConfigNegocio({ logo: lector.result }).catch((err) => alert(err.message));
     };
     lector.readAsDataURL(archivo);
   };
   const quitarLogo = () => {
     setLogo(null);
-    try { localStorage.removeItem("mi_negocio_logo"); } catch (err) {}
+    supaApi.guardarConfigNegocio({ logo: null }).catch(() => {});
   };
-  const [nombreUsuario, setNombreUsuario] = useState(() => {
-    try {
-      const guardado = localStorage.getItem("mi_negocio_nombre_usuario");
-      if (guardado) return guardado;
-    } catch (e) {}
-    const email = sesion?.user?.email || "";
-    return email ? email.split("@")[0] : "";
-  });
+
+  // Nombre de tu perfil: se guarda en tu cuenta (te sigue a cualquier dispositivo donde inicies sesión)
   useEffect(() => {
-    try { localStorage.setItem("mi_negocio_nombre_usuario", nombreUsuario); }
-    catch (e) {}
+    if (!cargaInicialRef.current) return;
+    const espera = setTimeout(() => {
+      supaApi.guardarMiPerfil({ nombre: nombreUsuario }).catch(() => {});
+    }, 800);
+    return () => clearTimeout(espera);
   }, [nombreUsuario]);
-  const [fotoPerfil, setFotoPerfil] = useState(() => {
-    try { return localStorage.getItem("mi_negocio_foto_perfil") || null; }
-    catch (e) { return null; }
-  });
+
   const fotoInputRef = React.useRef(null);
   const handleFotoPerfilChange = (e) => {
     const archivo = e.target.files && e.target.files[0];
@@ -3990,13 +4034,13 @@ function AppInterna({ sesion, onCerrarSesion }) {
     const lector = new FileReader();
     lector.onload = () => {
       setFotoPerfil(lector.result);
-      try { localStorage.setItem("mi_negocio_foto_perfil", lector.result); } catch (err) {}
+      supaApi.guardarMiPerfil({ foto: lector.result }).catch((err) => alert(err.message));
     };
     lector.readAsDataURL(archivo);
   };
   const quitarFotoPerfil = () => {
     setFotoPerfil(null);
-    try { localStorage.removeItem("mi_negocio_foto_perfil"); } catch (err) {}
+    supaApi.guardarMiPerfil({ foto: null }).catch(() => {});
   };
   const [productos, setProductos] = useState([]);
   const [cargando, setCargando] = useState(true);
