@@ -3238,6 +3238,7 @@ function TarjetaProductoGrid({ producto, puedeEditar, verCostos, cantidadEnCarri
   const idGaleria = `foto-galeria-${producto.id}`;
 
   const elegirFoto = async (e) => {
+    setMenuFotoAbierto(false);
     const archivo = e.target.files && e.target.files[0];
     e.target.value = "";
     if (!archivo) return;
@@ -3283,11 +3284,11 @@ function TarjetaProductoGrid({ producto, puedeEditar, verCostos, cantidadEnCarri
                 <div onClick={(e) => e.stopPropagation()} className="bg-white dark:bg-black rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-xs">
                   <div className="font-semibold text-slate-800 dark:text-white mb-3 font-display truncate">Foto de {producto.nombre}</div>
                   <div className="space-y-1.5">
-                    <label htmlFor={idCamara} onClick={() => setMenuFotoAbierto(false)}
+                    <label htmlFor={idCamara}
                       className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5 cursor-pointer">
                       📷 Tomar foto
                     </label>
-                    <label htmlFor={idGaleria} onClick={() => setMenuFotoAbierto(false)}
+                    <label htmlFor={idGaleria}
                       className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5 cursor-pointer">
                       🖼️ Elegir de galería
                     </label>
