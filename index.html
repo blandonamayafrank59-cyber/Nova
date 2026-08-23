@@ -75,10 +75,33 @@ async function refrescarToken() {
   return refrescandoPromesa;
 }
 
+// Error específico para cuando el dispositivo realmente no logra conectarse
+// (sin internet, DNS, timeout). Se usa para diferenciarlo de un error real
+// del servidor (ej: falta una columna, datos inválidos), que NO debe tratarse
+// como "sin conexión".
+class ErrorDeRed extends Error {}
+
+// Lee el detalle de error que devuelve Supabase (ej: "column products.imagen
+// does not exist") para poder mostrar el motivo real en vez de un mensaje genérico.
+async function mensajeErrorSupabase(res, mensajePorDefecto) {
+  try {
+    const datos = await res.json();
+    return datos.message || datos.error_description || datos.hint || mensajePorDefecto;
+  } catch (e) {
+    return mensajePorDefecto;
+  }
+}
+
 // Envoltorio de fetch: si el token venció (401), renueva la sesión sola y reintenta una vez.
 async function peticionApi(url, opciones = {}) {
   const { method = "GET", extraHeaders = {}, body } = opciones;
-  const intentar = () => fetch(url, { method, headers: getHeaders(extraHeaders), body });
+  const intentar = async () => {
+    try {
+      return await fetch(url, { method, headers: getHeaders(extraHeaders), body });
+    } catch (e) {
+      throw new ErrorDeRed("No se pudo conectar con el servidor. Revisá tu conexión a internet.");
+    }
+  };
   let res = await intentar();
   if (res.status === 401) {
     const renovado = await refrescarToken();
@@ -230,7 +253,7 @@ async function sincronizarPendientes() {
   if (pendientes.length === 0) { if (estadoConexionGlobal !== "conectado") notificarConexion("conectado"); return; }
   sincronizando = true;
   notificarConexion("sincronizando");
-  let huboError = false;
+  let huboErrorDeRed = false;
   for (const p of pendientes.sort((a, b) => a.id - b.id)) {
     try {
       if (p.tipo === "crear_producto") await supaApi.crearProducto(p.payload);
@@ -239,11 +262,17 @@ async function sincronizarPendientes() {
       else if (p.tipo === "registrar_venta") await supaApi.registrarVenta(p.payload);
       await pendienteEliminar(p.id);
     } catch (e) {
-      huboError = true;
+      if (e instanceof ErrorDeRed) {
+        huboErrorDeRed = true;
+      } else {
+        // No es un problema de conexión: reintentarlo por siempre no va a
+        // arreglarlo. Se descarta para no dejar el estado en un bucle.
+        await pendienteEliminar(p.id);
+      }
     }
   }
   sincronizando = false;
-  if (huboError) {
+  if (huboErrorDeRed) {
     notificarConexion("sin_conexion");
   } else {
     notificarConexion("sincronizado");
@@ -278,8 +307,15 @@ async function conAlternativaOffline(operacionReal, tipoPendiente, payload, apli
     if (estadoConexionGlobal !== "conectado" && estadoConexionGlobal !== "sincronizando") notificarConexion("conectado");
     return resultado;
   } catch (e) {
+    if (!(e instanceof ErrorDeRed)) {
+      // Error real del servidor (ej: dato inválido, columna faltante). No es un
+      // problema de conexión: no lo encolamos, lo dejamos pasar tal cual para
+      // que la pantalla que lo llamó pueda mostrarle el motivo real al usuario.
+      throw e;
+    }
     if (aplicarLocal) await aplicarLocal();
     await pendienteAgregar(tipoPendiente, payload);
+    notificarConexion("sin_conexion");
     return null;
   }
 }
@@ -369,7 +405,7 @@ const supaApi = {
       extraHeaders: { Prefer: "return=representation" },
       body: JSON.stringify(producto),
     });
-    if (!res.ok) throw new Error("No se pudo agregar el producto");
+    if (!res.ok) throw new Error(await mensajeErrorSupabase(res, "No se pudo agregar el producto"));
     return res.json();
   },
   async actualizarProducto(id, cambios) {
@@ -378,12 +414,12 @@ const supaApi = {
       extraHeaders: { Prefer: "return=representation" },
       body: JSON.stringify(cambios),
     });
-    if (!res.ok) throw new Error("No se pudo actualizar el producto");
+    if (!res.ok) throw new Error(await mensajeErrorSupabase(res, "No se pudo actualizar el producto"));
     return res.json();
   },
   async eliminarProducto(id) {
     const res = await peticionApi(`${SUPABASE_URL}/rest/v1/productos?id=eq.${id}`, { method: "DELETE" });
-    if (!res.ok) throw new Error("No se pudo eliminar el producto");
+    if (!res.ok) throw new Error(await mensajeErrorSupabase(res, "No se pudo eliminar el producto"));
   },
 
   // --- Caja ---
