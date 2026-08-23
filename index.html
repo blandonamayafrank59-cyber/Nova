@@ -14,6 +14,14 @@
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js" crossorigin></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+  // Guarda una copia de la app para que pueda abrir aunque no haya internet
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    });
+  }
+</script>
 <style>
   :root{ color-scheme: light; }
   body{ font-family:'Inter', sans-serif; }
@@ -75,33 +83,10 @@ async function refrescarToken() {
   return refrescandoPromesa;
 }
 
-// Error específico para cuando el dispositivo realmente no logra conectarse
-// (sin internet, DNS, timeout). Se usa para diferenciarlo de un error real
-// del servidor (ej: falta una columna, datos inválidos), que NO debe tratarse
-// como "sin conexión".
-class ErrorDeRed extends Error {}
-
-// Lee el detalle de error que devuelve Supabase (ej: "column products.imagen
-// does not exist") para poder mostrar el motivo real en vez de un mensaje genérico.
-async function mensajeErrorSupabase(res, mensajePorDefecto) {
-  try {
-    const datos = await res.json();
-    return datos.message || datos.error_description || datos.hint || mensajePorDefecto;
-  } catch (e) {
-    return mensajePorDefecto;
-  }
-}
-
 // Envoltorio de fetch: si el token venció (401), renueva la sesión sola y reintenta una vez.
 async function peticionApi(url, opciones = {}) {
   const { method = "GET", extraHeaders = {}, body } = opciones;
-  const intentar = async () => {
-    try {
-      return await fetch(url, { method, headers: getHeaders(extraHeaders), body });
-    } catch (e) {
-      throw new ErrorDeRed("No se pudo conectar con el servidor. Revisá tu conexión a internet.");
-    }
-  };
+  const intentar = () => fetch(url, { method, headers: getHeaders(extraHeaders), body });
   let res = await intentar();
   if (res.status === 401) {
     const renovado = await refrescarToken();
@@ -115,34 +100,6 @@ async function peticionApi(url, opciones = {}) {
 }
 
 // ============ MODO SIN INTERNET (offline) ============
-// Comprime una imagen (foto de cámara o galería) redimensionándola y
-// reexportándola como JPEG antes de guardarla, para que no pese varios MB.
-function comprimirImagen(archivo, maxAncho = 900, calidad = 0.72) {
-  return new Promise((resolve, reject) => {
-    const lector = new FileReader();
-    lector.onload = () => {
-      const img = new Image();
-      img.onload = () => {
-        let { width, height } = img;
-        if (width > maxAncho) {
-          height = Math.round(height * (maxAncho / width));
-          width = maxAncho;
-        }
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL("image/jpeg", calidad));
-      };
-      img.onerror = () => reject(new Error("No se pudo procesar la imagen."));
-      img.src = lector.result;
-    };
-    lector.onerror = () => reject(new Error("No se pudo leer el archivo."));
-    lector.readAsDataURL(archivo);
-  });
-}
-
 // Capa central reutilizable: cualquier módulo puede usar cacheGuardar/cacheLeer
 // para tener una copia local, y pendienteAgregar/pendientesListar/pendienteEliminar
 // para encolar operaciones que se reintentan solas cuando vuelve la conexión.
@@ -253,7 +210,7 @@ async function sincronizarPendientes() {
   if (pendientes.length === 0) { if (estadoConexionGlobal !== "conectado") notificarConexion("conectado"); return; }
   sincronizando = true;
   notificarConexion("sincronizando");
-  let huboErrorDeRed = false;
+  let huboError = false;
   for (const p of pendientes.sort((a, b) => a.id - b.id)) {
     try {
       if (p.tipo === "crear_producto") await supaApi.crearProducto(p.payload);
@@ -262,17 +219,11 @@ async function sincronizarPendientes() {
       else if (p.tipo === "registrar_venta") await supaApi.registrarVenta(p.payload);
       await pendienteEliminar(p.id);
     } catch (e) {
-      if (e instanceof ErrorDeRed) {
-        huboErrorDeRed = true;
-      } else {
-        // No es un problema de conexión: reintentarlo por siempre no va a
-        // arreglarlo. Se descarta para no dejar el estado en un bucle.
-        await pendienteEliminar(p.id);
-      }
+      huboError = true;
     }
   }
   sincronizando = false;
-  if (huboErrorDeRed) {
+  if (huboError) {
     notificarConexion("sin_conexion");
   } else {
     notificarConexion("sincronizado");
@@ -307,68 +258,10 @@ async function conAlternativaOffline(operacionReal, tipoPendiente, payload, apli
     if (estadoConexionGlobal !== "conectado" && estadoConexionGlobal !== "sincronizando") notificarConexion("conectado");
     return resultado;
   } catch (e) {
-    if (!(e instanceof ErrorDeRed)) {
-      // Error real del servidor (ej: dato inválido, columna faltante). No es un
-      // problema de conexión: no lo encolamos, lo dejamos pasar tal cual para
-      // que la pantalla que lo llamó pueda mostrarle el motivo real al usuario.
-      throw e;
-    }
     if (aplicarLocal) await aplicarLocal();
     await pendienteAgregar(tipoPendiente, payload);
-    notificarConexion("sin_conexion");
     return null;
   }
-}
-
-// --- Notificaciones propias de la app (reemplazan al mostrarError() feo del navegador) ---
-let toastsGlobal = [];
-let listenersToast = [];
-let toastIdSeq = 1;
-function notificarToasts() {
-  listenersToast.forEach(fn => { try { fn([...toastsGlobal]); } catch (e) {} });
-}
-function quitarToast(id) {
-  toastsGlobal = toastsGlobal.filter(t => t.id !== id);
-  notificarToasts();
-}
-function mostrarError(mensaje) {
-  const id = toastIdSeq++;
-  toastsGlobal = [...toastsGlobal, { id, mensaje: String(mensaje), tipo: "error" }];
-  notificarToasts();
-  setTimeout(() => quitarToast(id), 5000);
-}
-function mostrarAviso(mensaje) {
-  const id = toastIdSeq++;
-  toastsGlobal = [...toastsGlobal, { id, mensaje: String(mensaje), tipo: "exito" }];
-  notificarToasts();
-  setTimeout(() => quitarToast(id), 3500);
-}
-
-function ToastContainer() {
-  const [toasts, setToasts] = useState(toastsGlobal);
-  useEffect(() => {
-    const fn = (lista) => setToasts(lista);
-    listenersToast.push(fn);
-    return () => { listenersToast = listenersToast.filter(l => l !== fn); };
-  }, []);
-  if (toasts.length === 0) return null;
-  return (
-    <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[100] flex flex-col gap-2 w-[calc(100%-24px)] max-w-sm px-1 pointer-events-none">
-      {toasts.map((t) => {
-        const esError = t.tipo === "error";
-        return (
-          <div key={t.id}
-            className={`pointer-events-auto flex items-start gap-2.5 rounded-xl shadow-lg border p-3 bg-white dark:bg-black ${esError ? "border-rose-200 dark:border-rose-900/40" : "border-emerald-200 dark:border-emerald-900/40"}`}>
-            <span className={`shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-sm ${esError ? "bg-rose-50 dark:bg-rose-900/30 text-rose-500" : "bg-emerald-50 dark:bg-emerald-900/30 text-emerald-500"}`}>
-              {esError ? "!" : "✓"}
-            </span>
-            <span className="text-sm text-slate-700 dark:text-white flex-1 leading-snug pt-0.5">{t.mensaje}</span>
-            <button onClick={() => quitarToast(t.id)} className="text-slate-300 dark:text-white/30 text-sm leading-none shrink-0 pt-1">✕</button>
-          </div>
-        );
-      })}
-    </div>
-  );
 }
 
 function IndicadorConexion() {
@@ -456,7 +349,7 @@ const supaApi = {
       extraHeaders: { Prefer: "return=representation" },
       body: JSON.stringify(producto),
     });
-    if (!res.ok) throw new Error(await mensajeErrorSupabase(res, "No se pudo agregar el producto"));
+    if (!res.ok) throw new Error("No se pudo agregar el producto");
     return res.json();
   },
   async actualizarProducto(id, cambios) {
@@ -465,12 +358,12 @@ const supaApi = {
       extraHeaders: { Prefer: "return=representation" },
       body: JSON.stringify(cambios),
     });
-    if (!res.ok) throw new Error(await mensajeErrorSupabase(res, "No se pudo actualizar el producto"));
+    if (!res.ok) throw new Error("No se pudo actualizar el producto");
     return res.json();
   },
   async eliminarProducto(id) {
     const res = await peticionApi(`${SUPABASE_URL}/rest/v1/productos?id=eq.${id}`, { method: "DELETE" });
-    if (!res.ok) throw new Error(await mensajeErrorSupabase(res, "No se pudo eliminar el producto"));
+    if (!res.ok) throw new Error("No se pudo eliminar el producto");
   },
 
   // --- Caja ---
@@ -1019,7 +912,7 @@ function PaginaConfiguracion({ nombreNegocio, setNombreNegocio, logo, onLogoChan
             {logo && <button onClick={onQuitarLogo} className="text-xs font-medium text-slate-400 dark:text-white/50 hover:text-red-500 text-left">Quitar logo</button>}
           </div>
         </div>
-        <p className="text-[11px] text-slate-400 dark:text-white/40 mt-3">Se guarda en este dispositivo. La imagen se ajusta automáticamente, no importa el tamaño original.</p>
+        <p className="text-[11px] text-slate-400 dark:text-white/40 mt-3">Se guarda en este dispositivo. Recomendado: imagen cuadrada, menos de 1MB.</p>
       </div>
     </div>
   );
@@ -1232,7 +1125,7 @@ function ModalHistorialCliente({ abierto, cliente, pagos, onCerrar, onEditarFiad
       await onEditarFiado(fiado, items);
       setFiadoEditando(null);
       recargar();
-    } catch (e) { mostrarError(e.message); }
+    } catch (e) { alert(e.message); }
     finally { setGuardando(false); }
   };
 
@@ -1241,7 +1134,7 @@ function ModalHistorialCliente({ abierto, cliente, pagos, onCerrar, onEditarFiad
     try {
       await onEliminarFiado(f);
       recargar();
-    } catch (e) { mostrarError(e.message); }
+    } catch (e) { alert(e.message); }
   };
 
   return (
@@ -1342,14 +1235,14 @@ function ModalNuevoFiado({ abierto, clientes, productos, clientePreseleccionado,
     const cant = parseFloat(cantidadSel) || 0;
     if (!producto || cant <= 0) return;
     const ok = agregarProductoALista(producto, cant);
-    if (!ok) { mostrarError(`Solo hay ${producto.cantidad} unidades de ${producto.nombre} en stock.`); return; }
+    if (!ok) { alert(`Solo hay ${producto.cantidad} unidades de ${producto.nombre} en stock.`); return; }
     setProductoSel(null); setCantidadSel("1"); setBusquedaProducto("");
   };
 
   const agregarItemExterno = () => {
     const cant = parseFloat(cantidadExterno) || 0;
     const precio = parseFloat(precioExterno) || 0;
-    if (!nombreExterno.trim() || cant <= 0 || precio <= 0) { mostrarError("Completá nombre, cantidad y precio."); return; }
+    if (!nombreExterno.trim() || cant <= 0 || precio <= 0) { alert("Completá nombre, cantidad y precio."); return; }
     setItems(prev => [...prev, { producto_id: null, nombre: nombreExterno.trim(), cantidad: cant, precio_unitario: precio, tipo: "externo" }]);
     setNombreExterno(""); setCantidadExterno("1"); setPrecioExterno("");
   };
@@ -1497,13 +1390,13 @@ function ModalNuevoFiado({ abierto, clientes, productos, clientePreseleccionado,
   const resolverManual = (i, producto) => {
     const item = noResueltos[i];
     const ok = agregarProductoALista(producto, item.cantidad);
-    if (!ok) { mostrarError(`Solo hay ${producto.cantidad} unidades de ${producto.nombre} en stock.`); return; }
+    if (!ok) { alert(`Solo hay ${producto.cantidad} unidades de ${producto.nombre} en stock.`); return; }
     setNoResueltos(noResueltos.filter((_, idx) => idx !== i));
   };
 
   const resolverComoExterno = (i) => {
     const item = noResueltos[i];
-    if (!item.precio) { mostrarError("No reconocí el precio de este — agregalo como externo a mano abajo."); return; }
+    if (!item.precio) { alert("No reconocí el precio de este — agregalo como externo a mano abajo."); return; }
     setItems(prev => [...prev, { producto_id: null, nombre: item.nombreCrudo, cantidad: item.cantidad, precio_unitario: item.precio / item.cantidad, tipo: "externo" }]);
     setNoResueltos(noResueltos.filter((_, idx) => idx !== i));
   };
@@ -1709,7 +1602,7 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
       if (clienteEditando) await onActualizarCliente(clienteEditando.id, { nombre: form.nombre.trim(), telefono: form.telefono.trim() });
       else await onCrearCliente({ nombre: form.nombre.trim(), telefono: form.telefono.trim(), saldo_pendiente: 0 });
       setModalCliente(false); setClienteEditando(null);
-    } catch (e) { mostrarError(e.message); }
+    } catch (e) { alert(e.message); }
     finally { setGuardando(false); }
   };
 
@@ -1718,7 +1611,7 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
     try {
       await onCrearFiado(datos);
       setModalFiado(false);
-    } catch (e) { mostrarError(e.message); }
+    } catch (e) { alert(e.message); }
     finally { setGuardando(false); }
   };
 
@@ -1727,7 +1620,7 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
     try {
       await onRegistrarPago(clienteAbono, monto);
       setClienteAbono(null);
-    } catch (e) { mostrarError(e.message); }
+    } catch (e) { alert(e.message); }
     finally { setGuardando(false); }
   };
 
@@ -1735,7 +1628,7 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
     if (!confirm(`¿Eliminar a ${cliente.nombre}? Esto borra su historial de fiados y pagos, y devuelve al inventario los productos de sus fiados pendientes. No se puede deshacer.`)) return;
     setEliminandoId(cliente.id);
     try { await onEliminarCliente(cliente); }
-    catch (e) { mostrarError(e.message); }
+    catch (e) { alert(e.message); }
     finally { setEliminandoId(null); }
   };
 
@@ -1815,23 +1708,23 @@ function TarjetaLoteActivo({ lote, productos, onAgregarIngrediente, onFinalizar,
 
   const agregarDelInventario = async () => {
     const cant = parseFloat(cantidadIng) || 0;
-    if (!ingredienteInv || cant <= 0) { mostrarError("Elegí un ingrediente del inventario y una cantidad."); return; }
+    if (!ingredienteInv || cant <= 0) { alert("Elegí un ingrediente del inventario y una cantidad."); return; }
     setGuardandoIng(true);
     try {
       await onAgregarIngrediente(lote, { tipo: "inventario", producto_id: ingredienteInv.id, nombre: ingredienteInv.nombre, cantidad: cant, unidad: "u." });
       setIngredienteInv(null); setBusquedaIng(""); setCantidadIng("");
-    } catch (e) { mostrarError(e.message); }
+    } catch (e) { alert(e.message); }
     finally { setGuardandoIng(false); }
   };
 
   const agregarNuevo = async () => {
     const cant = parseFloat(cantidadNuevoIng) || 0;
-    if (!nombreNuevoIng.trim() || cant <= 0) { mostrarError("Escribí el nombre del ingrediente y una cantidad."); return; }
+    if (!nombreNuevoIng.trim() || cant <= 0) { alert("Escribí el nombre del ingrediente y una cantidad."); return; }
     setGuardandoIng(true);
     try {
       await onAgregarIngrediente(lote, { tipo: "nuevo", producto_id: null, nombre: nombreNuevoIng.trim(), cantidad: cant, unidad: unidadNuevoIng });
       setNombreNuevoIng(""); setCantidadNuevoIng(""); setUnidadNuevoIng("unidad");
-    } catch (e) { mostrarError(e.message); }
+    } catch (e) { alert(e.message); }
     finally { setGuardandoIng(false); }
   };
 
@@ -1839,7 +1732,7 @@ function TarjetaLoteActivo({ lote, productos, onAgregarIngrediente, onFinalizar,
     setFinalizando(true);
     try {
       await onFinalizar(lote, unidadesFinal ? parseFloat(unidadesFinal) : null);
-    } catch (e) { mostrarError(e.message); }
+    } catch (e) { alert(e.message); }
     finally { setFinalizando(false); }
   };
 
@@ -1944,18 +1837,18 @@ function PaginaProduccion({ productos, lotes, cargando, error, onIniciar, onAgre
   const [iniciando, setIniciando] = useState(false);
 
   const iniciarLote = async () => {
-    if (!nombreNuevoLote.trim()) { mostrarError("Escribí qué producto vas a preparar."); return; }
+    if (!nombreNuevoLote.trim()) { alert("Escribí qué producto vas a preparar."); return; }
     setIniciando(true);
     try {
       await onIniciar(nombreNuevoLote.trim());
       setNombreNuevoLote("");
-    } catch (e) { mostrarError(e.message); }
+    } catch (e) { alert(e.message); }
     finally { setIniciando(false); }
   };
 
   const eliminarLote = async (l) => {
     if (!confirm(`¿Eliminar el lote de ${l.producto_nombre}?`)) return;
-    try { await onEliminar(l.id); } catch (e) { mostrarError(e.message); }
+    try { await onEliminar(l.id); } catch (e) { alert(e.message); }
   };
 
   const enProceso = lotes.filter(l => l.estado === "en_proceso");
@@ -2038,13 +1931,13 @@ function PaginaConsumoHogar({ productos, registros, cargando, error, onRegistrar
   const costoTotal = costoUnitario * cantidadNum;
 
   const registrar = async () => {
-    if (!producto || cantidadNum <= 0) { mostrarError("Elegí un producto y una cantidad mayor a 0"); return; }
-    if (cantidadNum > producto.cantidad) { mostrarError(`Solo hay ${producto.cantidad} unidades de ${producto.nombre} en stock.`); return; }
+    if (!producto || cantidadNum <= 0) { alert("Elegí un producto y una cantidad mayor a 0"); return; }
+    if (cantidadNum > producto.cantidad) { alert(`Solo hay ${producto.cantidad} unidades de ${producto.nombre} en stock.`); return; }
     setGuardando(true);
     try {
       await onRegistrar({ producto, cantidad: cantidadNum, nota: nota.trim() });
       setProductoId(""); setCantidad(""); setNota("");
-    } catch (e) { mostrarError(e.message); }
+    } catch (e) { alert(e.message); }
     finally { setGuardando(false); }
   };
 
@@ -2052,7 +1945,7 @@ function PaginaConsumoHogar({ productos, registros, cargando, error, onRegistrar
     if (!confirm(`¿Eliminar este consumo de ${registro.producto_nombre}? Se devuelve la cantidad al inventario. No se puede deshacer.`)) return;
     setEliminandoId(registro.id);
     try { await onEliminar(registro); }
-    catch (e) { mostrarError(e.message); }
+    catch (e) { alert(e.message); }
     finally { setEliminandoId(null); }
   };
 
@@ -2220,19 +2113,19 @@ function PaginaUsuarios({ nombreNegocio }) {
       await cargar();
       const nuevo = creado && creado[0];
       if (nuevo && nuevo.telefono) window.open(enlaceWhatsapp(nuevo), "_blank");
-    } catch (e) { mostrarError(e.message); }
+    } catch (e) { alert(e.message); }
     finally { setGuardando(false); }
   };
 
   const cambiarRol = async (miembro, rol) => {
     try { await supaApi.actualizarMiembro(miembro.id, { rol }); await cargar(); }
-    catch (e) { mostrarError(e.message); }
+    catch (e) { alert(e.message); }
   };
 
   const quitarAcceso = async (miembro) => {
     if (!confirm(`¿Quitar el acceso de ${miembro.nombre || miembro.correo}?`)) return;
     try { await supaApi.eliminarMiembro(miembro.id); await cargar(); }
-    catch (e) { mostrarError(e.message); }
+    catch (e) { alert(e.message); }
   };
 
   const enlaceWhatsapp = (m) => {
@@ -2422,19 +2315,19 @@ function PaginaCaja() {
       else await supaApi.actualizarMovimiento(mov.id, cambios);
       setMovimientoEditando(null);
       await cargarTodo();
-    } catch (e) { mostrarError(e.message); }
+    } catch (e) { alert(e.message); }
     finally { setGuardandoEdicion(false); }
   };
 
   const guardarMontoInicial = async () => {
     const nuevo = parseFloat(montoInicialEditar);
-    if (isNaN(nuevo) || nuevo < 0) { mostrarError("Poné un monto válido."); return; }
+    if (isNaN(nuevo) || nuevo < 0) { alert("Poné un monto válido."); return; }
     setGuardandoMontoInicial(true);
     try {
       await supaApi.actualizarSesionCaja(sesion.id, { monto_inicial: nuevo });
       setPanelAbierto(null);
       await cargarTodo();
-    } catch (e) { mostrarError(e.message); }
+    } catch (e) { alert(e.message); }
     finally { setGuardandoMontoInicial(false); }
   };
 
@@ -2480,9 +2373,9 @@ function PaginaCaja() {
 
   const abrirCaja = async () => {
     const monto = parseFloat(montoApertura) || 0;
-    if (monto <= 0) { mostrarError("Poné un monto mayor a 0"); return; }
+    if (monto <= 0) { alert("Poné un monto mayor a 0"); return; }
     if (monto > saldoGuardado) {
-      mostrarError(`No hay suficiente dinero guardado para abrir con C$${monto.toFixed(2)}. Guardado actual: C$${saldoGuardado.toFixed(2)}. Editá el dinero guardado primero si hace falta.`);
+      alert(`No hay suficiente dinero guardado para abrir con C$${monto.toFixed(2)}. Guardado actual: C$${saldoGuardado.toFixed(2)}. Editá el dinero guardado primero si hace falta.`);
       return;
     }
     setProcesando(true);
@@ -2492,19 +2385,19 @@ function PaginaCaja() {
       setMontoApertura("");
       setFechaApertura(new Date().toISOString().slice(0, 10));
       await cargarTodo();
-    } catch (e) { mostrarError(e.message); }
+    } catch (e) { alert(e.message); }
     finally { setProcesando(false); }
   };
 
   const registrarMovimiento = async () => {
     const monto = parseFloat(nuevoMonto) || 0;
-    if (monto <= 0) { mostrarError("Poné un monto mayor a 0"); return; }
+    if (monto <= 0) { alert("Poné un monto mayor a 0"); return; }
     setProcesando(true);
     try {
       await supaApi.crearMovimiento({ sesion_id: sesion.id, tipo: nuevoTipo, descripcion: nuevaDescripcion.trim(), monto });
       setNuevaDescripcion(""); setNuevoMonto("");
       await cargarTodo();
-    } catch (e) { mostrarError(e.message); }
+    } catch (e) { alert(e.message); }
     finally { setProcesando(false); }
   };
 
@@ -2515,33 +2408,33 @@ function PaginaCaja() {
 
   const confirmarCierre = async () => {
     const montoFinal = parseFloat(montoFinalContado);
-    if (isNaN(montoFinal) || montoFinal < 0) { mostrarError("Poné el saldo final contado."); return; }
+    if (isNaN(montoFinal) || montoFinal < 0) { alert("Poné el saldo final contado."); return; }
     setProcesando(true);
     try {
       await supaApi.cerrarCaja(sesion.id, montoFinal);
       setMostrarCierre(false);
       await cargarTodo();
-    } catch (e) { mostrarError(e.message); }
+    } catch (e) { alert(e.message); }
     finally { setProcesando(false); }
   };
 
   const eliminarMovimiento = async (m) => {
     if (!confirm("¿Eliminar este movimiento? No se puede deshacer.")) return;
     try { await supaApi.eliminarMovimiento(m.id); await cargarTodo(); }
-    catch (e) { mostrarError(e.message); }
+    catch (e) { alert(e.message); }
   };
 
   const eliminarSesionHistorial = async (h) => {
     if (!confirm("¿Eliminar esta caja del historial? No se puede deshacer.")) return;
     try { await supaApi.eliminarSesionCaja(h.id); await cargarTodo(); }
-    catch (e) { mostrarError(e.message); }
+    catch (e) { alert(e.message); }
   };
 
   const moverDineroGuardado = async () => {
     const monto = parseFloat(montoGuardado) || 0;
-    if (monto <= 0) { mostrarError("Poné un monto mayor a 0"); return; }
-    if (tipoGuardado === "retiro" && monto > saldoActual) { mostrarError(`No hay suficiente dinero en la caja. Saldo actual: C$${saldoActual.toFixed(2)}`); return; }
-    if (tipoGuardado === "ingreso" && monto > saldoGuardado) { mostrarError(`No hay suficiente dinero guardado. Guardado actual: C$${saldoGuardado.toFixed(2)}`); return; }
+    if (monto <= 0) { alert("Poné un monto mayor a 0"); return; }
+    if (tipoGuardado === "retiro" && monto > saldoActual) { alert(`No hay suficiente dinero en la caja. Saldo actual: C$${saldoActual.toFixed(2)}`); return; }
+    if (tipoGuardado === "ingreso" && monto > saldoGuardado) { alert(`No hay suficiente dinero guardado. Guardado actual: C$${saldoGuardado.toFixed(2)}`); return; }
     setProcesandoGuardado(true);
     try {
       const desc = descGuardado.trim() || (tipoGuardado === "retiro" ? "Retiro hacia dinero guardado" : "Ingreso desde dinero guardado");
@@ -2551,14 +2444,14 @@ function PaginaCaja() {
       await supaApi.crearMovimientoGuardado({ tipo: tipoGuardado, monto, descripcion: desc });
       setMontoGuardado(""); setDescGuardado("");
       await cargarTodo();
-    } catch (e) { mostrarError(e.message); }
+    } catch (e) { alert(e.message); }
     finally { setProcesandoGuardado(false); }
   };
 
   const eliminarMovimientoGuardado = async (m) => {
     if (!confirm("¿Eliminar este movimiento de dinero guardado? Esto no afecta el saldo de la caja, solo corrige el registro de guardado.")) return;
     try { await supaApi.eliminarMovimientoGuardado(m.id); await cargarTodo(); }
-    catch (e) { mostrarError(e.message); }
+    catch (e) { alert(e.message); }
   };
 
   // Ajuste directo del saldo guardado — no depende de que la caja esté abierta,
@@ -2577,7 +2470,7 @@ function PaginaCaja() {
       setEditandoGuardado(false);
       setNuevoMontoGuardado("");
       await cargarTodo();
-    } catch (e) { mostrarError(e.message); }
+    } catch (e) { alert(e.message); }
     finally { setGuardandoAjusteGuardado(false); }
   };
 
@@ -2588,7 +2481,7 @@ function PaginaCaja() {
     try {
       await supaApi.crearMovimientoGuardado({ tipo: "ingreso", monto: saldoGuardado, descripcion: "Guardado puesto en cero" });
       await cargarTodo();
-    } catch (e) { mostrarError(e.message); }
+    } catch (e) { alert(e.message); }
     finally { setGuardandoAjusteGuardado(false); }
   };
 
@@ -2940,8 +2833,8 @@ function PaginaPerdidas({ productos, onActualizarProducto, onRecargarProductos }
   const valorPerdido = productoSeleccionado ? productoSeleccionado.costo * cantidadNum : 0;
 
   const registrar = async () => {
-    if (!productoSeleccionado) { mostrarError("Elegí un producto"); return; }
-    if (cantidadNum <= 0) { mostrarError("Poné una cantidad mayor a 0"); return; }
+    if (!productoSeleccionado) { alert("Elegí un producto"); return; }
+    if (cantidadNum <= 0) { alert("Poné una cantidad mayor a 0"); return; }
     setProcesando(true);
     try {
       await supaApi.registrarPerdida({
@@ -2956,7 +2849,7 @@ function PaginaPerdidas({ productos, onActualizarProducto, onRecargarProductos }
       setProductoId(""); setCantidad("");
       await cargar();
       await onRecargarProductos();
-    } catch (e) { mostrarError(e.message); }
+    } catch (e) { alert(e.message); }
     finally { setProcesando(false); }
   };
 
@@ -2970,7 +2863,7 @@ function PaginaPerdidas({ productos, onActualizarProducto, onRecargarProductos }
       await supaApi.eliminarPerdida(p.id);
       await cargar();
       await onRecargarProductos();
-    } catch (e) { mostrarError(e.message); }
+    } catch (e) { alert(e.message); }
   };
 
   return (
@@ -3161,7 +3054,7 @@ function SeccionEntradasInventario({ producto, onActualizarProducto, onRecargarP
 
   const agregarEntrada = async () => {
     const cant = parseFloat(cantidad);
-    if (isNaN(cant) || cant === 0) { mostrarError("Escribí una cantidad distinta de 0."); return; }
+    if (isNaN(cant) || cant === 0) { alert("Escribí una cantidad distinta de 0."); return; }
     setGuardando(true);
     try {
       await supaApi.crearEntradaInventario({ producto_id: producto.id, cantidad: cant, tipo, fecha, nota: nota.trim() || null });
@@ -3171,13 +3064,13 @@ function SeccionEntradasInventario({ producto, onActualizarProducto, onRecargarP
       setCantidad(""); setNota(""); setTipo("compra"); setFecha(new Date().toISOString().slice(0, 10));
       await cargar();
       await onRecargarProductos();
-    } catch (e) { mostrarError(e.message); }
+    } catch (e) { alert(e.message); }
     finally { setGuardando(false); }
   };
 
   const guardarEdicion = async (form) => {
     const nuevaCant = parseFloat(form.cantidad);
-    if (isNaN(nuevaCant) || nuevaCant === 0) { mostrarError("Escribí una cantidad distinta de 0."); return; }
+    if (isNaN(nuevaCant) || nuevaCant === 0) { alert("Escribí una cantidad distinta de 0."); return; }
     setGuardando(true);
     try {
       const delta = nuevaCant - entradaEditando.cantidad;
@@ -3188,7 +3081,7 @@ function SeccionEntradasInventario({ producto, onActualizarProducto, onRecargarP
       setEntradaEditando(null);
       await cargar();
       await onRecargarProductos();
-    } catch (e) { mostrarError(e.message); }
+    } catch (e) { alert(e.message); }
     finally { setGuardando(false); }
   };
 
@@ -3202,7 +3095,7 @@ function SeccionEntradasInventario({ producto, onActualizarProducto, onRecargarP
       setCantidadActual(nuevoStock);
       await cargar();
       await onRecargarProductos();
-    } catch (err) { mostrarError(err.message); }
+    } catch (err) { alert(err.message); }
     finally { setGuardando(false); }
   };
 
@@ -3342,217 +3235,7 @@ function ModalProducto({ abierto, producto, onGuardar, onCerrar, guardando, onAc
   );
 }
 
-function TarjetaProductoGrid({ producto, puedeEditar, verCostos, cantidadEnCarrito, onAgregar, onAbrirMenu, onImagenChange }) {
-  const [subiendoFoto, setSubiendoFoto] = useState(false);
-  const [menuFotoAbierto, setMenuFotoAbierto] = useState(false);
-  const bajo = producto.cantidad <= producto.minimo;
-  const inicial = producto.nombre.trim().charAt(0).toUpperCase() || "?";
-  const sinStock = producto.cantidad <= 0;
-  const margen = producto.costo > 0 ? ((producto.venta - producto.costo) / producto.costo * 100).toFixed(0) : 0;
-  const idCamara = `foto-camara-${producto.id}`;
-  const idGaleria = `foto-galeria-${producto.id}`;
-
-  const elegirFoto = async (e) => {
-    setMenuFotoAbierto(false);
-    const archivo = e.target.files && e.target.files[0];
-    e.target.value = "";
-    if (!archivo) return;
-    setSubiendoFoto(true);
-    try {
-      const dataUrl = await comprimirImagen(archivo);
-      await onImagenChange(producto, dataUrl);
-    } catch (err) { mostrarError(err.message); }
-    finally { setSubiendoFoto(false); }
-  };
-
-  const quitarFoto = async () => {
-    setMenuFotoAbierto(false);
-    setSubiendoFoto(true);
-    try { await onImagenChange(producto, null); }
-    catch (err) { mostrarError(err.message); }
-    finally { setSubiendoFoto(false); }
-  };
-
-  return (
-    <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl overflow-hidden flex flex-col">
-      <div
-        role={puedeEditar ? "button" : undefined}
-        tabIndex={puedeEditar ? 0 : undefined}
-        onClick={() => puedeEditar && setMenuFotoAbierto(true)}
-        onKeyDown={(e) => { if (puedeEditar && (e.key === "Enter" || e.key === " ")) setMenuFotoAbierto(true); }}
-        className={`relative w-full aspect-square bg-[#16233D]/5 dark:bg-white/5 ${puedeEditar ? "cursor-pointer" : ""}`}>
-        {producto.imagen ? (
-          <img src={producto.imagen} alt={producto.nombre} className="w-full h-full object-cover" />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center">
-            <span className="text-4xl font-bold text-[#16233D]/30 dark:text-white/25 font-display">{inicial}</span>
-          </div>
-        )}
-        {subiendoFoto && (
-          <div className="absolute inset-0 bg-black/40 flex items-center justify-center"><IconLoading className="text-white" /></div>
-        )}
-        {bajo && (
-          <div className="absolute top-2 left-2"><Badge tone="danger">Bajo</Badge></div>
-        )}
-        {puedeEditar && (
-          <button onClick={(e) => { e.stopPropagation(); onAbrirMenu(producto); }}
-            className="absolute top-2 right-2 w-7 h-7 rounded-full bg-white/90 dark:bg-black/70 flex items-center justify-center text-slate-500 dark:text-white/70 text-base leading-none shadow-sm">⋮</button>
-        )}
-        {puedeEditar && (
-          <button disabled={sinStock} onClick={(e) => { e.stopPropagation(); onAgregar(producto); }}
-            className="absolute bottom-2 right-2 w-10 h-10 rounded-full bg-[#16233D] text-white flex items-center justify-center text-xl font-bold disabled:opacity-30 shadow-md active:scale-95 transition-transform">
-            +
-            {cantidadEnCarrito > 0 && (
-              <span className="absolute -top-1.5 -right-1.5 bg-[#E3A73B] text-[#16233D] text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center">{cantidadEnCarrito}</span>
-            )}
-          </button>
-        )}
-      </div>
-
-      {puedeEditar && (
-        <>
-          <input id={idCamara} type="file" accept="image/*" capture="environment" onChange={elegirFoto} className="hidden" />
-          <input id={idGaleria} type="file" accept="image/*" onChange={elegirFoto} className="hidden" />
-          {menuFotoAbierto && (
-            <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-40" onClick={() => setMenuFotoAbierto(false)}>
-              <div onClick={(e) => e.stopPropagation()} className="bg-white dark:bg-black rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-xs">
-                <div className="font-semibold text-slate-800 dark:text-white mb-3 font-display truncate">Foto de {producto.nombre}</div>
-                <div className="space-y-1.5">
-                  <label htmlFor={idCamara}
-                    className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5 cursor-pointer">
-                    📷 Tomar foto
-                  </label>
-                  <label htmlFor={idGaleria}
-                    className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5 cursor-pointer">
-                    🖼️ Elegir de galería
-                  </label>
-                  {producto.imagen && (
-                    <button onClick={quitarFoto} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/10 flex items-center gap-2.5">
-                      🗑️ Quitar foto
-                    </button>
-                  )}
-                </div>
-                <button onClick={() => setMenuFotoAbierto(false)} className="w-full mt-3 px-3 py-2.5 rounded-lg text-sm font-medium border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white">Cancelar</button>
-              </div>
-            </div>
-          )}
-        </>
-      )}
-
-      <div className="p-3 flex flex-col gap-1">
-        <div className="text-sm font-semibold text-slate-800 dark:text-white truncate" title={producto.nombre}>{producto.nombre}</div>
-        <span className="text-xs text-slate-400 dark:text-white/40 font-mono">Stock {producto.cantidad}</span>
-        <div className="flex flex-col mt-1">
-          <span className="text-base font-bold text-[#16233D] dark:text-[#E3A73B] font-mono">C${Number(producto.venta).toFixed(2)}</span>
-          {verCostos && <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-mono">{margen}% margen</span>}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function CarritoVentaModal({ abierto, items, productos, clientes, onCambiarCantidad, onQuitar, onConfirmar, onCerrar, procesando }) {
-  const [metodo, setMetodo] = useState("efectivo");
-  const [clienteId, setClienteId] = useState("");
-  const [pagoRecibido, setPagoRecibido] = useState("");
-
-  useEffect(() => {
-    if (abierto) { setMetodo("efectivo"); setClienteId(""); setPagoRecibido(""); }
-  }, [abierto]);
-
-  if (!abierto) return null;
-
-  const lineas = Object.entries(items)
-    .map(([id, cantidad]) => {
-      const producto = productos.find(p => String(p.id) === String(id));
-      return producto ? { producto, cantidad } : null;
-    })
-    .filter(Boolean);
-
-  const total = lineas.reduce((a, l) => a + l.cantidad * Number(l.producto.venta), 0);
-  const pago = parseFloat(pagoRecibido) || 0;
-  const cambio = Math.max(0, pago - total);
-  const puedeConfirmar = lineas.length > 0 && (metodo === "efectivo" || (metodo === "fiado" && clienteId));
-
-  return (
-    <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-40" onClick={onCerrar}>
-      <div onClick={(e) => e.stopPropagation()} className="bg-white dark:bg-black rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-sm max-h-[85vh] overflow-y-auto">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="font-bold text-slate-800 dark:text-white font-display">Carrito de venta</h3>
-          <button onClick={onCerrar} className="text-slate-400 dark:text-white/50"><IconClose /></button>
-        </div>
-
-        {lineas.length === 0 ? (
-          <p className="text-sm text-slate-400 text-center py-8">El carrito está vacío.</p>
-        ) : (
-          <div className="space-y-2 mb-4">
-            {lineas.map(({ producto, cantidad }) => (
-              <div key={producto.id} className="flex items-center gap-2 bg-slate-50 dark:bg-neutral-900 rounded-xl p-2.5">
-                <div className="w-9 h-9 rounded-lg bg-[#16233D]/10 dark:bg-white/10 flex items-center justify-center shrink-0 overflow-hidden">
-                  {producto.imagen ? (
-                    <img src={producto.imagen} alt={producto.nombre} className="w-full h-full object-cover" />
-                  ) : (
-                    <span className="text-sm font-bold text-[#16233D]/60 dark:text-white/50 font-display">{producto.nombre.trim().charAt(0).toUpperCase()}</span>
-                  )}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-medium text-slate-700 dark:text-white truncate">{producto.nombre}</div>
-                  <div className="text-xs text-slate-400 dark:text-white/40 font-mono">C${Number(producto.venta).toFixed(2)} / u</div>
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <button onClick={() => onCambiarCantidad(producto.id, -1)} className="w-6 h-6 rounded-full border border-slate-200 dark:border-white/20 text-slate-600 dark:text-white flex items-center justify-center text-sm">−</button>
-                  <span className="text-sm font-semibold w-4 text-center font-mono">{cantidad}</span>
-                  <button onClick={() => onCambiarCantidad(producto.id, 1)} disabled={cantidad >= producto.cantidad} className="w-6 h-6 rounded-full border border-slate-200 dark:border-white/20 text-slate-600 dark:text-white flex items-center justify-center text-sm disabled:opacity-30">+</button>
-                </div>
-                <div className="text-sm font-semibold text-[#16233D] dark:text-[#E3A73B] font-mono w-16 text-right shrink-0">C${(cantidad * Number(producto.venta)).toFixed(2)}</div>
-                <button onClick={() => onQuitar(producto.id)} className="text-slate-300 dark:text-white/30 hover:text-rose-500 text-sm shrink-0">🗑️</button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div className="border-t border-slate-100 dark:border-white/10 pt-3">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-sm text-slate-500 dark:text-white">{lineas.length} producto(s)</span>
-            <span className="text-xl font-bold text-[#16233D] dark:text-white font-mono">C${total.toFixed(2)}</span>
-          </div>
-
-          <div className="flex gap-2 mb-3">
-            <button onClick={() => setMetodo("efectivo")} className={`flex-1 py-2 rounded-lg text-sm font-semibold border ${metodo === "efectivo" ? "bg-[#16233D] text-white border-[#16233D]" : "border-slate-200 dark:border-white/10 text-slate-500 dark:text-white"}`}>Efectivo</button>
-            <button onClick={() => setMetodo("fiado")} className={`flex-1 py-2 rounded-lg text-sm font-semibold border ${metodo === "fiado" ? "bg-[#16233D] text-white border-[#16233D]" : "border-slate-200 dark:border-white/10 text-slate-500 dark:text-white"}`}>Fiado</button>
-          </div>
-
-          {metodo === "efectivo" ? (
-            <div className="bg-slate-50 dark:bg-neutral-900 rounded-lg p-3 mb-3">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs text-slate-500 dark:text-white">Pago recibido</span>
-                <input type="number" value={pagoRecibido} onChange={(e) => setPagoRecibido(e.target.value)} placeholder="0.00"
-                  className="w-24 text-right text-sm font-mono bg-transparent outline-none border-b border-slate-200 dark:border-white/20 text-slate-800 dark:text-white" />
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-slate-500 dark:text-white">Cambio</span>
-                <span className="text-sm font-mono font-semibold text-slate-700 dark:text-white">C${cambio.toFixed(2)}</span>
-              </div>
-            </div>
-          ) : (
-            <select value={clienteId} onChange={(e) => setClienteId(e.target.value)}
-              className="w-full mb-3 px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]">
-              <option value="">Elegí un cliente...</option>
-              {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-            </select>
-          )}
-
-          <button disabled={!puedeConfirmar || procesando} onClick={() => onConfirmar({ lineas, total, metodo, clienteId })}
-            className="w-full py-3 rounded-xl text-sm font-semibold bg-[#E3A73B] text-[#16233D] disabled:opacity-50 flex items-center justify-center gap-2">
-            {procesando && <IconLoading />} Confirmar venta
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function PaginaInventario({ productos, clientes = [], cargando, error, onRecargar, onCrear, onActualizar, onEliminar, onVentaRegistrada, onCrearFiado, verCostos = true, puedeEditar = true }) {
+function PaginaInventario({ productos, cargando, error, onRecargar, onCrear, onActualizar, onEliminar, onVentaRegistrada, verCostos = true, puedeEditar = true }) {
   const [busqueda, setBusqueda] = useState("");
   const [modalAbierto, setModalAbierto] = useState(false);
   const [productoEditando, setProductoEditando] = useState(null);
@@ -3584,7 +3267,7 @@ function PaginaInventario({ productos, clientes = [], cargando, error, onRecarga
         await onCrear(datos);
       }
       setModalAbierto(false);
-    } catch (e) { mostrarError(e.message); }
+    } catch (e) { alert(e.message); }
     finally { setGuardando(false); }
   };
 
@@ -3604,61 +3287,12 @@ function PaginaInventario({ productos, clientes = [], cargando, error, onRecarga
     try {
       await vender(p, cant);
       setProductoVentaCantidad(null);
-    } catch (e) { mostrarError(e.message); }
+    } catch (e) { alert(e.message); }
     finally { setVendiendo(false); }
   };
 
-  const [carrito, setCarrito] = useState({});
-  const [carritoAbierto, setCarritoAbierto] = useState(false);
-  const [procesandoVenta, setProcesandoVenta] = useState(false);
-
-  const totalUnidadesCarrito = Object.values(carrito).reduce((a, b) => a + b, 0);
-
-  const agregarAlCarrito = (p) => {
-    setCarrito(prev => {
-      const actual = prev[p.id] || 0;
-      if (actual >= p.cantidad) return prev;
-      return { ...prev, [p.id]: actual + 1 };
-    });
-  };
-  const cambiarCantidadCarrito = (id, delta) => {
-    setCarrito(prev => {
-      const producto = productos.find(p => String(p.id) === String(id));
-      const actual = prev[id] || 0;
-      const nueva = Math.max(0, Math.min(producto ? producto.cantidad : actual, actual + delta));
-      if (nueva === 0) { const copia = { ...prev }; delete copia[id]; return copia; }
-      return { ...prev, [id]: nueva };
-    });
-  };
-  const quitarDelCarrito = (id) => {
-    setCarrito(prev => { const copia = { ...prev }; delete copia[id]; return copia; });
-  };
-
-  const handleImagenProducto = async (producto, dataUrl) => {
-    await onActualizar(producto.id, { imagen: dataUrl });
-  };
-
-  const confirmarVentaCarrito = async ({ lineas, total, metodo, clienteId }) => {
-    setProcesandoVenta(true);
-    try {
-      if (metodo === "efectivo") {
-        for (const { producto, cantidad } of lineas) {
-          await vender(producto, cantidad);
-        }
-      } else {
-        const items = lineas.map(({ producto, cantidad }) => ({
-          producto_id: producto.id, nombre: producto.nombre, cantidad, precio_unitario: producto.venta, tipo: "inventario",
-        }));
-        await onCrearFiado({ cliente_id: clienteId, productos: items, total });
-      }
-      setCarrito({});
-      setCarritoAbierto(false);
-    } catch (e) { mostrarError(e.message); }
-    finally { setProcesandoVenta(false); }
-  };
-
   return (
-    <div className="space-y-5 pb-20">
+    <div className="space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-bold text-slate-800 dark:text-white font-display">Inventario</h1>
@@ -3689,27 +3323,45 @@ function PaginaInventario({ productos, clientes = [], cargando, error, onRecarga
       ) : filtrados.length === 0 ? (
         <div className="text-center py-16 text-slate-400 text-sm">{productos.length === 0 ? "Todavía no hay productos — agregá el primero." : "Sin resultados para tu búsqueda."}</div>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-          {filtrados.map((p) => (
-            <TarjetaProductoGrid key={p.id} producto={p} puedeEditar={puedeEditar} verCostos={verCostos}
-              cantidadEnCarrito={carrito[p.id] || 0} onAgregar={agregarAlCarrito} onAbrirMenu={setProductoMenu} onImagenChange={handleImagenProducto} />
-          ))}
+        <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl overflow-hidden overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-[#16233D] text-white text-xs uppercase tracking-wide">
+                <th className="text-left px-4 py-3 font-semibold">Producto</th>
+                <th className="text-left px-4 py-3 font-semibold hidden sm:table-cell">Categoría</th>
+                <th className="text-right px-4 py-3 font-semibold">Stock</th>
+                {verCostos && <th className="text-right px-4 py-3 font-semibold hidden md:table-cell">Costo</th>}
+                <th className="text-right px-4 py-3 font-semibold">Venta</th>
+                {verCostos && <th className="text-right px-4 py-3 font-semibold hidden md:table-cell">Margen</th>}
+                <th className="text-center px-4 py-3 font-semibold">Estado</th>
+                <th className="px-4 py-3"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtrados.map((p, i) => {
+                const bajo = p.cantidad <= p.minimo;
+                const margen = p.costo > 0 ? ((p.venta - p.costo) / p.costo * 100).toFixed(0) : 0;
+                return (
+                  <tr key={p.id} className={`border-t border-slate-100 dark:border-white/10 ${i % 2 === 1 ? "bg-slate-50/60 dark:bg-black" : ""}`}>
+                    <td onClick={() => puedeEditar && setProductoMenu(p)} className={`px-4 py-3 font-medium text-slate-700 dark:text-white ${puedeEditar ? "cursor-pointer active:opacity-60" : ""}`}>{p.nombre}</td>
+                    <td className="px-4 py-3 text-slate-500 dark:text-white hidden sm:table-cell">{p.categoria}</td>
+                    <td className="px-4 py-3 text-right font-mono text-slate-700 dark:text-white">{p.cantidad}</td>
+                    {verCostos && <td className="px-4 py-3 text-right font-mono text-slate-500 dark:text-white hidden md:table-cell">C${Number(p.costo).toFixed(2)}</td>}
+                    <td className="px-4 py-3 text-right font-mono text-slate-700 dark:text-white">C${Number(p.venta).toFixed(2)}</td>
+                    {verCostos && <td className="px-4 py-3 text-right font-mono text-emerald-600 dark:text-emerald-400 hidden md:table-cell">{margen}%</td>}
+                    <td className="px-4 py-3 text-center">{bajo ? <Badge tone="danger">Stock bajo</Badge> : <Badge tone="ok">Bien</Badge>}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex gap-1 justify-end">
+                        {puedeEditar && <BotonVentaRapida producto={p} onVenderUno={(prod) => vender(prod, 1)} onAbrirCantidad={setProductoVentaCantidad} />}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
-
-      {puedeEditar && totalUnidadesCarrito > 0 && (
-        <button onClick={() => setCarritoAbierto(true)}
-          className="fixed bottom-5 right-5 z-30 flex items-center gap-2 bg-[#16233D] text-white font-semibold text-sm pl-4 pr-5 py-3 rounded-full shadow-lg">
-          <IconCart />
-          <span>Ver carrito</span>
-          <span className="bg-[#E3A73B] text-[#16233D] text-xs font-bold rounded-full min-w-[20px] h-5 px-1.5 flex items-center justify-center">{totalUnidadesCarrito}</span>
-        </button>
-      )}
-
-      <CarritoVentaModal abierto={carritoAbierto} items={carrito} productos={productos} clientes={clientes}
-        onCambiarCantidad={cambiarCantidadCarrito} onQuitar={quitarDelCarrito}
-        onConfirmar={confirmarVentaCarrito} onCerrar={() => setCarritoAbierto(false)} procesando={procesandoVenta} />
-
       <ModalVentaCantidad producto={productoVentaCantidad} guardando={vendiendo} onConfirmar={confirmarVentaCantidad} onCerrar={() => setProductoVentaCantidad(null)} />
       <ModalAccionesProducto producto={productoMenu}
         onEditar={() => { abrirEditar(productoMenu); setProductoMenu(null); }}
@@ -3770,7 +3422,7 @@ function PaginaHistorial({ productos, onActualizarProducto, onRecargarProductos 
   useEffect(() => { cargar(); }, [cargar]);
 
   const eliminarEvento = async (e) => {
-    if (e.tipo === "producto_agregado") { mostrarError("Para eliminar un producto, hacelo desde Inventario."); return; }
+    if (e.tipo === "producto_agregado") { alert("Para eliminar un producto, hacelo desde Inventario."); return; }
     if (!confirm("¿Eliminar este registro? No se puede deshacer.")) return;
     try {
       if (e.tipo === "venta") {
@@ -3793,7 +3445,7 @@ function PaginaHistorial({ productos, onActualizarProducto, onRecargarProductos 
         await supaApi.eliminarMovimiento(e.raw.id);
       }
       await cargar();
-    } catch (err) { mostrarError(err.message); }
+    } catch (err) { alert(err.message); }
   };
 
   const tiposLabel = {
@@ -4351,15 +4003,19 @@ function AppInterna({ sesion, onCerrarSesion }) {
   }, [nombreNegocio]);
 
   const logoInputRef = React.useRef(null);
-  const handleLogoChange = async (e) => {
+  const handleLogoChange = (e) => {
     const archivo = e.target.files && e.target.files[0];
-    e.target.value = "";
     if (!archivo) return;
-    try {
-      const dataUrl = await comprimirImagen(archivo, 500, 0.75);
-      setLogo(dataUrl);
-      await supaApi.guardarConfigNegocio({ logo: dataUrl });
-    } catch (err) { mostrarError(err.message); }
+    if (archivo.size > 1024 * 1024) {
+      alert("La imagen es muy grande. Elegí una foto de menos de 1MB.");
+      return;
+    }
+    const lector = new FileReader();
+    lector.onload = () => {
+      setLogo(lector.result);
+      supaApi.guardarConfigNegocio({ logo: lector.result }).catch((err) => alert(err.message));
+    };
+    lector.readAsDataURL(archivo);
   };
   const quitarLogo = () => {
     setLogo(null);
@@ -4376,15 +4032,19 @@ function AppInterna({ sesion, onCerrarSesion }) {
   }, [nombreUsuario]);
 
   const fotoInputRef = React.useRef(null);
-  const handleFotoPerfilChange = async (e) => {
+  const handleFotoPerfilChange = (e) => {
     const archivo = e.target.files && e.target.files[0];
-    e.target.value = "";
     if (!archivo) return;
-    try {
-      const dataUrl = await comprimirImagen(archivo, 500, 0.75);
-      setFotoPerfil(dataUrl);
-      await supaApi.guardarMiPerfil({ foto: dataUrl });
-    } catch (err) { mostrarError(err.message); }
+    if (archivo.size > 1024 * 1024) {
+      alert("La imagen es muy grande. Elegí una foto de menos de 1MB.");
+      return;
+    }
+    const lector = new FileReader();
+    lector.onload = () => {
+      setFotoPerfil(lector.result);
+      supaApi.guardarMiPerfil({ foto: lector.result }).catch((err) => alert(err.message));
+    };
+    lector.readAsDataURL(archivo);
   };
   const quitarFotoPerfil = () => {
     setFotoPerfil(null);
@@ -4524,7 +4184,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
     if (sesionAbierta) {
       await supaApi.crearMovimiento({ sesion_id: sesionAbierta.id, tipo: "ingreso", descripcion: `Abono de fiado — ${cliente.nombre}`, monto });
     } else {
-      mostrarError("El pago se registró, pero no hay una caja abierta ahora mismo — abrí la caja para que este ingreso se sume ahí.");
+      alert("El pago se registró, pero no hay una caja abierta ahora mismo — abrí la caja para que este ingreso se sume ahí.");
     }
     await cargarCuentasPorCobrar();
   };
@@ -4692,7 +4352,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
 
   const paginas = {
     dashboard: <PaginaDashboard productos={productos} stockBajo={stockBajo} valorStock={valorStock} gananciaAcumulada={gananciaAcumulada} unidadesVendidas={unidadesVendidas} totalPorCobrar={totalPorCobrar} clientesPendientes={clientesPendientes} recuperadoMes={recuperadoMes} verGanancias={permisos.ver_ganancias} onIrA={setPagina} />,
-    inventario: <PaginaInventario productos={productos} clientes={clientes} cargando={cargando} error={error} onRecargar={cargarProductos} onCrear={handleCrear} onActualizar={handleActualizar} onEliminar={handleEliminar} onVentaRegistrada={handleRegistrarVenta} onCrearFiado={handleCrearFiado} verCostos={permisos.ver_costos} puedeEditar={permisos.editar} />,
+    inventario: <PaginaInventario productos={productos} cargando={cargando} error={error} onRecargar={cargarProductos} onCrear={handleCrear} onActualizar={handleActualizar} onEliminar={handleEliminar} onVentaRegistrada={handleRegistrarVenta} verCostos={permisos.ver_costos} puedeEditar={permisos.editar} />,
     caja: <PaginaCaja />,
     perdidas: <PaginaPerdidas productos={productos} onActualizarProducto={handleActualizar} onRecargarProductos={cargarProductos} />,
     historial: <PaginaHistorial productos={productos} onActualizarProducto={handleActualizar} onRecargarProductos={cargarProductos} />,
@@ -4771,7 +4431,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<><App /><ToastContainer /></>);
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
 </script>
 <script>
   var __codigoFuente = document.getElementById("app-source").textContent;
