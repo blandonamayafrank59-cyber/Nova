@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="light">
 <title>Nova - Inventario y Ganancias</title>
+<link rel="manifest" href="manifest.json">
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%2316233D'/%3E%3Cpath d='M12 2.5 L13.9 9.7 L21 12 L13.9 14.3 L12 21.5 L10.1 14.3 L3 12 L10.1 9.7 Z' fill='%23E3A73B'/%3E%3Ccircle cx='12' cy='12' r='1.8' fill='%2316233D'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -4862,6 +4863,13 @@ ReactDOM.createRoot(document.getElementById("root")).render(<><App /><ToastConta
   var __script = document.createElement("script");
   __script.textContent = __compilado;
   document.body.appendChild(__script);
+</script>
+<script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("sw.js").catch(() => {});
+    });
+  }
 </script>
 </body>
 </html>
