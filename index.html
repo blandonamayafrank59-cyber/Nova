@@ -4493,7 +4493,10 @@ function AppInterna({ sesion, onCerrarSesion }) {
 
   useEffect(() => {
     cargarProductos();
-    const intervalo = setInterval(cargarProductos, 6000);
+    const intervalo = setInterval(() => {
+      if (estadoConexionGlobal === "sin_conexion") return; // no pisar cambios locales mientras estamos offline
+      cargarProductos();
+    }, 6000);
     return () => clearInterval(intervalo);
   }, [cargarProductos]);
 
@@ -4572,7 +4575,10 @@ function AppInterna({ sesion, onCerrarSesion }) {
 
   useEffect(() => {
     cargarCuentasPorCobrar();
-    const intervalo = setInterval(cargarCuentasPorCobrar, 8000);
+    const intervalo = setInterval(() => {
+      if (estadoConexionGlobal === "sin_conexion") return;
+      cargarCuentasPorCobrar();
+    }, 8000);
     return () => clearInterval(intervalo);
   }, [cargarCuentasPorCobrar]);
 
@@ -4699,7 +4705,10 @@ function AppInterna({ sesion, onCerrarSesion }) {
 
   useEffect(() => {
     cargarConsumoHogar();
-    const intervalo = setInterval(cargarConsumoHogar, 8000);
+    const intervalo = setInterval(() => {
+      if (estadoConexionGlobal === "sin_conexion") return;
+      cargarConsumoHogar();
+    }, 8000);
     return () => clearInterval(intervalo);
   }, [cargarConsumoHogar]);
 
