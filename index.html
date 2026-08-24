@@ -98,7 +98,7 @@ async function peticionApi(url, opciones = {}) {
   const { method = "GET", extraHeaders = {}, body } = opciones;
   const intentar = async () => {
     try {
-      return await fetch(url, { method, headers: getHeaders(extraHeaders), body });
+      return await fetch(url, { method, headers: getHeaders(extraHeaders), body, cache: "no-store" });
     } catch (e) {
       throw new ErrorDeRed("No se pudo conectar con el servidor. Revisá tu conexión a internet.");
     }
@@ -2444,6 +2444,27 @@ function ModalEditarMovimiento({ movimiento, onGuardar, onCerrar, guardando }) {
   );
 }
 
+// Trae las ventas ya registradas en el servidor MÁS las que se hicieron sin
+// internet y todavía no llegaron a subirse (guardadas en la cola de pendientes),
+// para que el negocio vea sus ventas de inmediato aunque no haya conexión.
+async function ventasIncluyendoPendientes(ventasBase) {
+  const pendientes = await pendientesListar();
+  const ventasPendientes = pendientes
+    .filter((p) => p.tipo === "registrar_venta")
+    .map((p) => ({
+      id: `pendiente_${p.id}`,
+      producto_id: p.payload.producto_id,
+      producto_nombre: p.payload.producto_nombre,
+      cantidad: p.payload.cantidad,
+      precio_venta: p.payload.precio_venta,
+      precio_costo: p.payload.precio_costo,
+      ganancia: p.payload.ganancia,
+      creado_en: new Date(p.creado_en).toISOString(),
+      _pendiente: true,
+    }));
+  return [...ventasPendientes, ...ventasBase];
+}
+
 function PaginaCaja() {
   const [sesion, setSesion] = useState(null);
   const [movimientos, setMovimientos] = useState([]);
@@ -2507,7 +2528,8 @@ function PaginaCaja() {
       let huboOffline = off1 || off2;
       if (s) {
         const { datos: movs, offline: off3 } = await obtenerConRespaldo("caja_movimientos_abiertos", () => supaApi.listarMovimientos(s.id));
-        const { datos: ventas, offline: off4 } = await obtenerConRespaldo("ventas", () => supaApi.listarVentas());
+        const { datos: ventasServidor, offline: off4 } = await obtenerConRespaldo("ventas", () => supaApi.listarVentas());
+        const ventas = await ventasIncluyendoPendientes(ventasServidor);
         setMovimientos(movs);
         const hoy = new Date();
         setVentasHoy(ventas.filter(v => new Date(v.creado_en).toDateString() === hoy.toDateString()));
@@ -3796,7 +3818,7 @@ function PaginaHistorial({ productos, onActualizarProducto, onRecargarProductos 
     try {
       setError(null);
       const [
-        { datos: ventas, offline: off1 },
+        { datos: ventasServidor, offline: off1 },
         { datos: perdidas, offline: off2 },
         { datos: movimientos, offline: off3 },
         { datos: productosDb, offline: off4 },
@@ -3806,11 +3828,12 @@ function PaginaHistorial({ productos, onActualizarProducto, onRecargarProductos 
         obtenerConRespaldo("hist_movimientos", () => supaApi.listarTodosMovimientosCaja()),
         obtenerConRespaldo("hist_productos", () => supaApi.listarProductos()),
       ]);
+      const ventas = await ventasIncluyendoPendientes(ventasServidor);
 
       const items = [
         ...ventas.map(v => ({
           id: v.id, tipo: "venta", fecha: v.creado_en, raw: v,
-          descripcion: `Venta: ${v.cantidad} u. de ${v.producto_nombre}`,
+          descripcion: `Venta: ${v.cantidad} u. de ${v.producto_nombre}${v._pendiente ? " (sin sincronizar)" : ""}`,
           monto: v.cantidad * v.precio_venta, positivo: true,
         })),
         ...perdidas.map(p => ({
