@@ -802,6 +802,13 @@ const supaApi = {
     const datos = await res.json();
     return datos[0] || null;
   },
+  async crearMiNegocio(nombre) {
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/rpc/crear_mi_negocio`, {
+      method: "POST", body: JSON.stringify({ p_nombre: nombre || "Mi negocio" }),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo crear tu negocio"); }
+    return res.json();
+  },
 
   // --- Configuración del negocio (nombre y logo, compartidos entre todos los dispositivos/usuarios del negocio) ---
   async obtenerConfigNegocio() {
@@ -4670,9 +4677,25 @@ function App() {
 
 function AppInterna({ sesion, onCerrarSesion }) {
   const [pagina, setPagina] = useState("inventario");
-  const [miMembresia, setMiMembresia] = useState(undefined); // undefined = cargando, null = admin principal
+  const [miMembresia, setMiMembresia] = useState(undefined); // undefined = cargando, null = todavía sin negocio (se le crea uno), objeto = ya tiene
+  const [errorNegocio, setErrorNegocio] = useState(null);
   useEffect(() => {
-    supaApi.miMembresia().then(setMiMembresia).catch(() => setMiMembresia(null));
+    let cancelado = false;
+    (async () => {
+      try {
+        let m = await supaApi.miMembresia();
+        if (!m) {
+          // Cuenta nueva sin negocio todavía: le creamos el suyo propio.
+          // Nunca ve ni comparte datos de otro negocio.
+          await supaApi.crearMiNegocio();
+          m = await supaApi.miMembresia();
+        }
+        if (!cancelado) setMiMembresia(m);
+      } catch (e) {
+        if (!cancelado) setErrorNegocio(e.message);
+      }
+    })();
+    return () => { cancelado = true; };
   }, []);
   const miRol = miMembresia?.rol || "administrador";
   const permisos = PERMISOS_POR_ROL[miRol] || PERMISOS_POR_ROL.administrador;
@@ -5124,7 +5147,18 @@ function AppInterna({ sesion, onCerrarSesion }) {
     configuracion: <PaginaConfiguracion nombreNegocio={nombreNegocio} setNombreNegocio={setNombreNegocio} logo={logo} onLogoChange={handleLogoChange} onQuitarLogo={quitarLogo} logoInputRef={logoInputRef} />,
   };
 
-  return (
+  return miMembresia === undefined ? (
+    <div className="min-h-screen bg-slate-50 dark:bg-black flex items-center justify-center gap-2 text-slate-400 text-sm">
+      <IconLoading /> Preparando tu negocio...
+    </div>
+  ) : errorNegocio ? (
+    <div className="min-h-screen bg-slate-50 dark:bg-black flex items-center justify-center p-4">
+      <div className="bg-white dark:bg-neutral-900 border border-rose-200 dark:border-rose-900/30 rounded-xl p-6 max-w-sm text-center">
+        <p className="text-sm text-rose-600 dark:text-rose-400 mb-4">{errorNegocio}</p>
+        <button onClick={() => window.location.reload()} className="px-4 py-2 rounded-lg bg-[#E3A73B] text-[#16233D] text-sm font-semibold">Reintentar</button>
+      </div>
+    </div>
+  ) : (
     <div className={modoOscuro ? "dark" : ""}>
       <div className="min-h-screen bg-slate-50 dark:bg-black flex transition-colors">
         {sidebarAbierto && <div className="fixed inset-0 bg-black/40 z-20 lg:hidden" onClick={() => setSidebarAbierto(false)} />}
