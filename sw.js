@@ -1,7 +1,7 @@
 // Service Worker de Nova — permite abrir la app sin internet, incluso después
 // de cerrarla o reiniciar el teléfono, siempre que se haya abierto una vez
 // con conexión antes.
-const CACHE_NAME = "nova-app-shell-v1";
+const CACHE_NAME = "nova-app-shell-v2";
 
 const ARCHIVOS_APP = [
   "./",
@@ -20,7 +20,7 @@ self.addEventListener("install", (evento) => {
     caches.open(CACHE_NAME).then((cache) =>
       Promise.all(
         ARCHIVOS_APP.map((url) =>
-          fetch(url, { mode: url.startsWith("http") ? "no-cors" : "same-origin" })
+          fetch(url, { mode: url.startsWith("http") ? "no-cors" : "same-origin", cache: "no-store" })
             .then((res) => cache.put(url, res))
             .catch(() => {}) // si algo no se pudo guardar, seguimos sin romper la instalación
         )
@@ -38,14 +38,15 @@ self.addEventListener("activate", (evento) => {
   self.clients.claim();
 });
 
-// Estrategia: intenta traer la versión más nueva de internet; si no hay
-// conexión, sirve la copia guardada. Así, con internet siempre ves lo último,
-// y sin internet la app igual abre.
+// Estrategia: intenta traer la versión más nueva de internet (sin usar la
+// caché del navegador, "cache: no-store", para que sea siempre la más
+// fresca); si no hay conexión, sirve la copia guardada. Así, con internet
+// siempre ves lo último, y sin internet la app igual abre.
 self.addEventListener("fetch", (evento) => {
   if (evento.request.method !== "GET") return;
 
   evento.respondWith(
-    fetch(evento.request)
+    fetch(evento.request, { cache: "no-store" })
       .then((respuestaRed) => {
         const copia = respuestaRed.clone();
         caches.open(CACHE_NAME).then((cache) => cache.put(evento.request, copia)).catch(() => {});
