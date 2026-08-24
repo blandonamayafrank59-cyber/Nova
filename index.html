@@ -816,7 +816,7 @@ const supaApi = {
   // vez que alguien inicia sesión sin haber sido invitado a un negocio existente.
   async crearNegocioPropio(correo) {
     const resNeg = await peticionApi(`${SUPABASE_URL}/rest/v1/negocios`, {
-      method: "POST", extraHeaders: { Prefer: "return=representation" }, body: JSON.stringify({}),
+      method: "POST", extraHeaders: { Prefer: "return=representation" }, body: JSON.stringify({ creado_por: currentUserId }),
     });
     if (!resNeg.ok) { const d = await resNeg.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo crear tu negocio"); }
     const negocio = (await resNeg.json())[0];
