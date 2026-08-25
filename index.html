@@ -916,7 +916,9 @@ const supaApi = {
 
   // --- Notas y recordatorios ---
   async listarNotas() {
-    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/notas?select=*&order=fijada.desc,creado_en.desc`);
+    // Filtro explícito por negocio_id: no depender únicamente de RLS.
+    if (!currentNegocioId) throw new Error("No se pudo determinar tu negocio. Volvé a iniciar sesión.");
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/notas?negocio_id=eq.${currentNegocioId}&select=*&order=fijada.desc,creado_en.desc`);
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudieron cargar las notas"); }
     return res.json();
   },
