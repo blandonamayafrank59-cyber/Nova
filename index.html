@@ -973,10 +973,10 @@ const IconFactory   = (p) => <Ic {...p}>🏭</Ic>;
 const ROL_LABEL = { administrador: "Administrador", dueno: "Dueño / Propietario", empleado: "Empleado", consulta: "Usuario de consulta" };
 
 const PERMISOS_POR_ROL = {
-  administrador: { dashboard: true, inventario: true, caja: true, perdidas: true, historial: true, estadisticas: true, cuentas: true, consumo: true, produccion: true, usuarios: true, configuracion: true, ver_costos: true, ver_ganancias: true, editar: true },
-  dueno:         { dashboard: true, inventario: true, caja: false, perdidas: true, historial: false, estadisticas: true, cuentas: true, consumo: false, produccion: false, usuarios: false, configuracion: false, ver_costos: true, ver_ganancias: true, editar: false },
-  empleado:      { dashboard: false, inventario: true, caja: true, perdidas: false, historial: false, estadisticas: false, cuentas: true, consumo: false, produccion: true, usuarios: false, configuracion: false, ver_costos: false, ver_ganancias: false, editar: true },
-  consulta:      { dashboard: true, inventario: true, caja: false, perdidas: true, historial: false, estadisticas: true, cuentas: true, consumo: false, produccion: false, usuarios: false, configuracion: false, ver_costos: false, ver_ganancias: true, editar: false },
+  administrador: { dashboard: true, inventario: true, caja: true, perdidas: true, historial: true, estadisticas: true, cuentas: true, consumo: true, produccion: true, notas: true, usuarios: true, configuracion: true, ver_costos: true, ver_ganancias: true, editar: true },
+  dueno:         { dashboard: true, inventario: true, caja: false, perdidas: true, historial: false, estadisticas: true, cuentas: true, consumo: false, produccion: false, notas: true, usuarios: false, configuracion: false, ver_costos: true, ver_ganancias: true, editar: false },
+  empleado:      { dashboard: false, inventario: true, caja: true, perdidas: false, historial: false, estadisticas: false, cuentas: true, consumo: false, produccion: true, notas: true, usuarios: false, configuracion: false, ver_costos: false, ver_ganancias: false, editar: true },
+  consulta:      { dashboard: true, inventario: true, caja: false, perdidas: true, historial: false, estadisticas: true, cuentas: true, consumo: false, produccion: false, notas: true, usuarios: false, configuracion: false, ver_costos: false, ver_ganancias: true, editar: false },
 };
 
 const NAV_ITEMS = [
@@ -989,7 +989,7 @@ const NAV_ITEMS = [
   { id: "cuentas", label: "Cuentas por cobrar", icon: IconCard, listo: true, permiso: "cuentas" },
   { id: "consumo", label: "Consumo del hogar", icon: IconHome, listo: true, permiso: "consumo" },
   { id: "produccion", label: "Producción por lotes", icon: IconFactory, listo: true, permiso: "produccion" },
-  { id: "notas", label: "Notas", icon: IconNote, listo: true, permiso: "dashboard" },
+  { id: "notas", label: "Notas", icon: IconNote, listo: true, permiso: "notas" },
   { id: "usuarios", label: "Usuarios", icon: IconUsers, listo: true, permiso: "usuarios" },
   { id: "configuracion", label: "Configuración", icon: IconGear, listo: true, permiso: "configuracion" },
 ];
