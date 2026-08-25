@@ -5275,6 +5275,64 @@ function AppInterna({ sesion, onCerrarSesion }) {
     </div>
   );
 }
+  // PARCHE DE EMERGENCIA PARA LLAVES FORÁNEAS EN PRODUCTOS
+const originalHandleCreateProduct = window.handleCreateProduct || null;
+
+window.handleCreateProduct = async (e) => {
+  if (e && e.preventDefault) e.preventDefault();
+  
+  try {
+    // 1. Forzar validación asíncrona de la sesión en Supabase
+    const { data: { user: currentUser }, error: authError } = await supabase.auth.getUser();
+
+    if (authError || !currentUser) {
+      alert("Tu sesión expiró. Por favor, cierra sesión e inicia nuevamente.");
+      return;
+    }
+
+    const userId = currentUser.id;
+    const negocioId = currentUser.user_metadata?.negocio_id || currentUser.id;
+
+    // Obtener los valores de los campos de texto locales (capturados dinámicamente)
+    const elNombre = document.querySelector('input[placeholder*="Nombre"]') || document.querySelector('#nombreProducto') || { value: nombre || "" };
+    const elCosto = document.querySelector('input[placeholder*="Costo"]') || document.querySelector('#precioCosto') || { value: precioCosto || "0" };
+    const elVenta = document.querySelector('input[placeholder*="Venta"]') || document.querySelector('#precioVenta') || { value: precioVenta || "0" };
+    const elStock = document.querySelector('input[placeholder*="Stock"]') || document.querySelector('#cantidadStock') || { value: cantidadStock || "0" };
+    const elMinimo = document.querySelector('input[placeholder*="Mínimo"]') || document.querySelector('#alertarMinimo') || { value: alertarMinimo || "0" };
+
+    // 2. Insertar a la tabla inyectando forzosamente el ID del usuario y del negocio
+    const { data, error: insertError } = await supabase
+      .from('productos')
+      .insert([
+        {
+          nombre: elNombre.value.trim(),
+          precio_costo: parseFloat(elCosto.value) || 0,
+          precio_venta: parseFloat(elVenta.value) || 0,
+          cantidad_stock: parseInt(elStock.value) || 0,
+          alertar_minimo: parseInt(elMinimo.value) || 0,
+          user_id: userId,
+          negocio_id: negocioId
+        }
+      ])
+      .select();
+
+    if (insertError) {
+      alert("Error de base de datos: " + insertError.message);
+      return;
+    }
+
+    alert("¡Felicidades bro! Producto número 80 agregado con éxito.");
+    
+    // Forzar recarga o ejecución de hooks de limpieza
+    if (typeof fetchProductos === 'function') fetchProductos();
+    if (typeof setIsModalOpen === 'function') setIsModalOpen(false);
+    window.location.reload(); // Recarga la interfaz para reflejar los cambios
+
+  } catch (err) {
+    console.error("Fallo crítico en parche:", err);
+  }
+};
+
 
 ReactDOM.createRoot(document.getElementById("root")).render(<><App /><ToastContainer /><ModalConfirmacion /></>);
 </script>
