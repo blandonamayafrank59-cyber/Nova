@@ -769,7 +769,10 @@ const supaApi = {
 
   // --- Usuarios, invitaciones y roles ---
   async listarMiembros() {
-    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/miembros?select=*&order=creado_en.asc`);
+    // Filtro explícito por negocio_id: no depender únicamente de las políticas
+    // RLS de Supabase para aislar los miembros de cada negocio.
+    if (!currentNegocioId) throw new Error("No se pudo determinar tu negocio. Volvé a iniciar sesión.");
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/miembros?negocio_id=eq.${currentNegocioId}&select=*&order=creado_en.asc`);
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudieron cargar los usuarios"); }
     return res.json();
   },
