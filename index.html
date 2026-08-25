@@ -805,8 +805,9 @@ const supaApi = {
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo aceptar la invitación"); }
     return res.json();
   },
-  async miMembresia() {
-    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/miembros?user_id=eq.${currentUserId}&estado=eq.activo&select=*&limit=1`);
+  async miMembresia(userId) {
+    const uid = userId || currentUserId;
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/miembros?user_id=eq.${uid}&estado=eq.activo&select=*&limit=1`);
     if (!res.ok) return null;
     const datos = await res.json();
     return datos[0] || null;
@@ -814,15 +815,17 @@ const supaApi = {
   // Crea un negocio nuevo e independiente (con su propio espacio de datos, aislado
   // del resto) y convierte al usuario actual en su administrador. Se usa la primera
   // vez que alguien inicia sesión sin haber sido invitado a un negocio existente.
-  async crearNegocioPropio(correo) {
+  async crearNegocioPropio(correo, userId) {
+    const uid = userId || currentUserId;
+    if (!uid) throw new Error("No se pudo identificar tu usuario para crear el negocio. Volvé a iniciar sesión.");
     const resNeg = await peticionApi(`${SUPABASE_URL}/rest/v1/negocios`, {
-      method: "POST", extraHeaders: { Prefer: "return=representation" }, body: JSON.stringify({ creado_por: currentUserId }),
+      method: "POST", extraHeaders: { Prefer: "return=representation" }, body: JSON.stringify({ creado_por: uid }),
     });
     if (!resNeg.ok) { const d = await resNeg.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo crear tu negocio"); }
     const negocio = (await resNeg.json())[0];
     const resM = await peticionApi(`${SUPABASE_URL}/rest/v1/miembros`, {
       method: "POST", extraHeaders: { Prefer: "return=representation" },
-      body: JSON.stringify({ negocio_id: negocio.id, user_id: currentUserId, correo, rol: "administrador", estado: "activo" }),
+      body: JSON.stringify({ negocio_id: negocio.id, user_id: uid, correo, rol: "administrador", estado: "activo" }),
     });
     if (!resM.ok) { const d = await resM.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo activar tu negocio"); }
     return { negocio, miembro: (await resM.json())[0] };
@@ -4668,17 +4671,21 @@ function App() {
   const [negocioListo, setNegocioListo] = useState(false);
   const [errorNegocio, setErrorNegocio] = useState(null);
   useEffect(() => {
-    if (!sesion?.user?.id || invitacion) { setNegocioListo(false); return; }
+    // Esperamos también a que se resuelva si hay una invitación pendiente
+    // (invitacion === undefined mientras se está consultando) para no crear
+    // un negocio de más antes de tiempo.
+    if (!sesion?.user?.id || invitacion === undefined || invitacion) { setNegocioListo(false); return; }
+    const uid = sesion.user.id;
     let cancelado = false;
     (async () => {
       try {
         setErrorNegocio(null);
-        const membresia = await supaApi.miMembresia();
+        const membresia = await supaApi.miMembresia(uid);
         if (cancelado) return;
         if (membresia) {
           currentNegocioId = membresia.negocio_id;
         } else {
-          const { negocio } = await supaApi.crearNegocioPropio(sesion.user.email);
+          const { negocio } = await supaApi.crearNegocioPropio(sesion.user.email, uid);
           if (cancelado) return;
           currentNegocioId = negocio.id;
         }
