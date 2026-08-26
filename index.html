@@ -516,7 +516,27 @@ async function obtenerMiNegocioId() {
 }
 function limpiarCacheNegocioId() { miNegocioIdCache = null; }
 
+// Caché en memoria de la moneda del negocio conectado (símbolo, código, decimales).
+// Se actualiza cuando se carga o se cambia la configuración del negocio, y la usan
+// todos los componentes que muestran montos, sin necesidad de pasarla por props.
+let monedaActualCache = { codigo: "NIO", simbolo: "C$", nombre: "Córdoba nicaragüense", decimales: 2 };
+function actualizarMonedaActual(moneda) {
+  if (moneda && moneda.simbolo) monedaActualCache = moneda;
+}
+function formatearMonto(valor) {
+  const n = Number(valor);
+  const num = Number.isFinite(n) ? n : 0;
+  return `${monedaActualCache.simbolo}${num.toLocaleString("es", { minimumFractionDigits: monedaActualCache.decimales, maximumFractionDigits: monedaActualCache.decimales })}`;
+}
+function simboloMonedaActual() { return monedaActualCache.simbolo; }
+
 const supaApi = {
+  // --- Catálogo de monedas (compartido, de solo lectura) ---
+  async listarMonedas() {
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/monedas?select=*&activa=eq.true&order=nombre.asc`);
+    if (!res.ok) throw new Error("No se pudo cargar el catálogo de monedas");
+    return res.json();
+  },
   async listarProductos() {
     const negocioId = await obtenerMiNegocioId();
     const res = await peticionApi(`${SUPABASE_URL}/rest/v1/productos?negocio_id=eq.${negocioId}&select=*&order=creado_en.asc`);
@@ -862,7 +882,7 @@ const supaApi = {
   // --- Configuración del negocio (nombre y logo, compartidos entre todos los dispositivos/usuarios del negocio) ---
   async obtenerConfigNegocio() {
     const negocioId = await obtenerMiNegocioId();
-    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/negocio_config?negocio_id=eq.${negocioId}&select=*&limit=1`);
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/negocio_config?negocio_id=eq.${negocioId}&select=*,moneda:monedas(codigo,nombre,simbolo,decimales)&limit=1`);
     if (!res.ok) return null;
     const datos = await res.json();
     return datos[0] || null;
@@ -1119,7 +1139,7 @@ function ProximamenteCard({ titulo, descripcion, icon: Icon }) {
   );
 }
 
-function PaginaConfiguracion({ nombreNegocio, setNombreNegocio, logo, onLogoChange, onQuitarLogo, logoInputRef }) {
+function PaginaConfiguracion({ nombreNegocio, setNombreNegocio, logo, onLogoChange, onQuitarLogo, logoInputRef, moneda, monedasDisponibles, onCambiarMoneda }) {
   return (
     <div className="max-w-xl">
       <h1 className="text-xl font-bold text-slate-800 dark:text-white font-display mb-1">Configuración del negocio</h1>
@@ -1130,6 +1150,15 @@ function PaginaConfiguracion({ nombreNegocio, setNombreNegocio, logo, onLogoChan
         <input value={nombreNegocio} onChange={(e) => setNombreNegocio(e.target.value)} placeholder="Ej. Bendición de Dios"
           className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-black text-slate-800 dark:text-white text-sm outline-none focus:ring-2 focus:ring-[#E3A73B]" />
         <p className="text-[11px] text-slate-400 dark:text-white/40 mt-2">Este nombre aparece en el menú y en los reportes.</p>
+      </div>
+
+      <div className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-white/10 rounded-2xl p-5 mb-4">
+        <label className="block text-xs font-semibold text-slate-500 dark:text-white/60 uppercase tracking-wide mb-2">Moneda del negocio</label>
+        <select value={moneda.codigo} onChange={(e) => onCambiarMoneda(e.target.value)}
+          className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-black text-slate-800 dark:text-white text-sm outline-none focus:ring-2 focus:ring-[#E3A73B]">
+          {monedasDisponibles.map(m => <option key={m.codigo} value={m.codigo}>{m.nombre} ({m.simbolo})</option>)}
+        </select>
+        <p className="text-[11px] text-slate-400 dark:text-white/40 mt-2">Los precios, ventas, caja y reportes se muestran en esta moneda.</p>
       </div>
 
       <div className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-white/10 rounded-2xl p-5">
@@ -1164,7 +1193,7 @@ function ModalAccionesCliente({ cliente, onCerrar, onAgregarFiado, onAbonar, onH
     <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-40" onClick={onCerrar}>
       <div onClick={(e) => e.stopPropagation()} className="bg-white dark:bg-black rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-xs">
         <div className="font-semibold text-slate-800 dark:text-white mb-1 font-display truncate">{cliente.nombre}</div>
-        <div className="text-xs text-slate-400 dark:text-white/40 mb-4">Saldo pendiente: C${Number(cliente.saldo_pendiente).toFixed(2)}</div>
+        <div className="text-xs text-slate-400 dark:text-white/40 mb-4">Saldo pendiente: {formatearMonto(Number(cliente.saldo_pendiente).toFixed(2))}</div>
         <div className="space-y-1.5">
           <button onClick={onAgregarFiado} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5">🧾 Agregar fiado</button>
           <button onClick={onAbonar} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5">➕ Registrar abono</button>
@@ -1195,7 +1224,7 @@ function TarjetaCliente({ cliente, totalPagado, ultimaActividad, onAbrirMenu, on
       </button>
       <div>
         <div className="text-[11px] text-slate-400 dark:text-white/40 uppercase tracking-wide">Saldo pendiente</div>
-        <div className="text-2xl font-bold font-mono text-slate-800 dark:text-white">C${saldo.toFixed(2)}</div>
+        <div className="text-2xl font-bold font-mono text-slate-800 dark:text-white">{formatearMonto(saldo.toFixed(2))}</div>
       </div>
       <div>
         <div className="w-full h-1.5 bg-slate-100 dark:bg-white/10 rounded-full overflow-hidden">
@@ -1256,13 +1285,13 @@ function ModalAbono({ abierto, cliente, onGuardar, onCerrar, guardando }) {
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-40">
       <div className="bg-white dark:bg-black rounded-2xl p-6 w-full max-w-sm">
         <h2 className="font-semibold text-slate-800 dark:text-white mb-1 font-display">Registrar abono</h2>
-        <p className="text-sm text-slate-500 dark:text-white/60 mb-4">{cliente.nombre} · Saldo actual: C${saldo.toFixed(2)}</p>
+        <p className="text-sm text-slate-500 dark:text-white/60 mb-4">{cliente.nombre} · Saldo actual: {formatearMonto(saldo.toFixed(2))}</p>
         <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Monto del pago</label>
         <input type="number" value={monto} onChange={(e) => setMonto(e.target.value)} placeholder="0.00"
           className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]" />
         {montoNum > 0 && (
           <div className="bg-slate-50 dark:bg-neutral-900 rounded-lg p-3 text-xs text-slate-500 dark:text-white mt-3">
-            Saldo anterior: C${saldo.toFixed(2)} · Pago: -C${montoNum.toFixed(2)} · Nuevo saldo: <b className="text-emerald-600 dark:text-emerald-400">C${nuevoSaldo.toFixed(2)}</b>
+            Saldo anterior: {formatearMonto(saldo.toFixed(2))} · Pago: -{formatearMonto(montoNum.toFixed(2))} · Nuevo saldo: <b className="text-emerald-600 dark:text-emerald-400">{formatearMonto(nuevoSaldo.toFixed(2))}</b>
           </div>
         )}
         <div className="flex gap-2 justify-end mt-5">
@@ -1317,7 +1346,7 @@ function ModalEditarFiado({ fiado, productos, onGuardar, onCerrar, guardando }) 
         </div>
         <div className="bg-slate-50 dark:bg-neutral-900 rounded-lg p-3 text-sm text-slate-700 dark:text-white flex items-center justify-between mb-4">
           <span>Total</span>
-          <span className="font-mono font-bold">C${total.toFixed(2)}</span>
+          <span className="font-mono font-bold">{formatearMonto(total.toFixed(2))}</span>
         </div>
         <div className="flex gap-2">
           <button onClick={onCerrar} className="flex-1 px-3 py-2.5 rounded-lg text-sm font-medium border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white">Cancelar</button>
@@ -1361,7 +1390,7 @@ function ModalHistorialCliente({ abierto, cliente, pagos, onCerrar, onEditarFiad
   };
 
   const eliminar = async (f) => {
-    if (!(await confirmarAccion(`¿Eliminar este fiado de C$${Number(f.total).toFixed(2)}? Se devuelve al inventario lo que corresponda y se ajusta el saldo del cliente.`))) return;
+    if (!(await confirmarAccion(`¿Eliminar este fiado de ${formatearMonto(Number(f.total).toFixed(2))}? Se devuelve al inventario lo que corresponda y se ajusta el saldo del cliente.`))) return;
     try {
       await onEliminarFiado(f);
       recargar();
@@ -1372,7 +1401,7 @@ function ModalHistorialCliente({ abierto, cliente, pagos, onCerrar, onEditarFiad
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-40">
       <div className="bg-white dark:bg-black rounded-2xl p-6 w-full max-w-md max-h-[85vh] overflow-y-auto">
         <h2 className="font-semibold text-slate-800 dark:text-white mb-1 font-display">{cliente.nombre}</h2>
-        <p className="text-sm text-slate-500 dark:text-white/60 mb-4">Saldo pendiente: C${Number(cliente.saldo_pendiente).toFixed(2)}</p>
+        <p className="text-sm text-slate-500 dark:text-white/60 mb-4">Saldo pendiente: {formatearMonto(Number(cliente.saldo_pendiente).toFixed(2))}</p>
 
         <h3 className="text-xs font-semibold text-slate-500 dark:text-white/60 uppercase tracking-wide mb-2">Historial de compras (fiados)</h3>
         {cargando && <p className="text-sm text-slate-400 py-2">Cargando...</p>}
@@ -1380,7 +1409,7 @@ function ModalHistorialCliente({ abierto, cliente, pagos, onCerrar, onEditarFiad
           {fiados.map(f => (
             <div key={f.id} className="bg-slate-50 dark:bg-neutral-900 rounded-lg p-3">
               <div className="flex items-center justify-between text-sm">
-                <span className="font-mono font-semibold text-slate-700 dark:text-white">C${Number(f.total).toFixed(2)}</span>
+                <span className="font-mono font-semibold text-slate-700 dark:text-white">{formatearMonto(Number(f.total).toFixed(2))}</span>
                 <span className="text-xs text-slate-400 dark:text-white/40">{new Date(f.creado_en).toLocaleString()}</span>
               </div>
               <div className="text-xs text-slate-500 dark:text-white/60 mt-1 mb-2">
@@ -1399,7 +1428,7 @@ function ModalHistorialCliente({ abierto, cliente, pagos, onCerrar, onEditarFiad
         <div className="space-y-2">
           {pagosCliente.map(p => (
             <div key={p.id} className="flex items-center justify-between bg-emerald-50 dark:bg-emerald-900/10 rounded-lg p-3 text-sm">
-              <span className="font-mono font-semibold text-emerald-700 dark:text-emerald-400">+C${Number(p.monto).toFixed(2)}</span>
+              <span className="font-mono font-semibold text-emerald-700 dark:text-emerald-400">+{formatearMonto(Number(p.monto).toFixed(2))}</span>
               <span className="text-xs text-slate-400 dark:text-white/40">{new Date(p.creado_en).toLocaleString()}</span>
             </div>
           ))}
@@ -1669,7 +1698,7 @@ function ModalNuevoFiado({ abierto, clientes, productos, clientePreseleccionado,
               {noResueltos.map((item, i) => (
                 <div key={i} className="bg-white dark:bg-black rounded-lg p-2">
                   <div className="text-xs text-slate-600 dark:text-white/70 mb-1.5">
-                    "{item.texto}" — cant: {item.cantidad}{item.precio !== null ? ` · precio: C$${item.precio}` : ""}
+                    "{item.texto}" — cant: {item.cantidad}{item.precio !== null ? ` · precio: ${formatearMonto(item.precio)}` : ""}
                   </div>
                   <div className="flex gap-1.5">
                     <select onChange={(e) => { const p = productos.find(pr => pr.id === e.target.value); if (p) resolverManual(i, p); }} defaultValue=""
@@ -1681,7 +1710,7 @@ function ModalNuevoFiado({ abierto, clientes, productos, clientePreseleccionado,
                   </div>
                   {item.precio !== null && (
                     <button onClick={() => resolverComoExterno(i)} className="w-full mt-1.5 text-xs font-medium text-[#16233D] dark:text-[#E3A73B] underline text-left">
-                      O agregar "{item.nombreCrudo}" como fuera de inventario (C${item.precio})
+                      O agregar "{item.nombreCrudo}" como fuera de inventario ({formatearMonto(item.precio)})
                     </button>
                   )}
                 </div>
@@ -1772,7 +1801,7 @@ function ModalNuevoFiado({ abierto, clientes, productos, clientePreseleccionado,
                 {it.tipo === "externo" && <span className="text-[10px] text-amber-600 dark:text-amber-400 ml-1.5">(fuera de inventario)</span>}
               </span>
               <div className="flex items-center gap-2">
-                <span className="font-mono text-slate-500 dark:text-white/60">C${(it.cantidad * it.precio_unitario).toFixed(2)}</span>
+                <span className="font-mono text-slate-500 dark:text-white/60">{formatearMonto((it.cantidad * it.precio_unitario).toFixed(2))}</span>
                 <button onClick={() => quitarItem(i)} className="text-rose-500 text-xs">✕</button>
               </div>
             </div>
@@ -1782,7 +1811,7 @@ function ModalNuevoFiado({ abierto, clientes, productos, clientePreseleccionado,
 
         <div className="bg-slate-50 dark:bg-neutral-900 rounded-lg p-3 text-sm text-slate-700 dark:text-white flex items-center justify-between mb-4">
           <span>Total del fiado</span>
-          <span className="font-mono font-bold">C${total.toFixed(2)}</span>
+          <span className="font-mono font-bold">{formatearMonto(total.toFixed(2))}</span>
         </div>
 
         <div className="flex gap-2 justify-end">
@@ -1877,9 +1906,9 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-5">
-        <StatCard label="Total por cobrar" value={`C$${totalPorCobrar.toFixed(2)}`} icon={IconCard} accent="bg-[#16233D]" />
+        <StatCard label="Total por cobrar" value={`${formatearMonto(totalPorCobrar.toFixed(2))}`} icon={IconCard} accent="bg-[#16233D]" />
         <StatCard label="Clientes pendientes" value={clientesPendientes} icon={IconUsers} accent="bg-amber-500" />
-        <StatCard label="Recuperado este mes" value={`C$${recuperadoMes.toFixed(2)}`} icon={IconWallet} accent="bg-emerald-600" />
+        <StatCard label="Recuperado este mes" value={`${formatearMonto(recuperadoMes.toFixed(2))}`} icon={IconWallet} accent="bg-emerald-600" />
       </div>
 
       {error && <div className="bg-rose-50 dark:bg-rose-900/10 border border-rose-200 dark:border-rose-900/30 text-rose-600 dark:text-rose-400 text-sm rounded-lg p-3 mb-4">{error}</div>}
@@ -2199,9 +2228,9 @@ function PaginaConsumoHogar({ productos, registros, cargando, error, onRegistrar
       {error && <div className="bg-rose-50 dark:bg-rose-900/10 border border-rose-200 dark:border-rose-900/30 text-rose-600 dark:text-rose-400 text-sm rounded-lg p-3">{error}</div>}
 
       <div className="grid grid-cols-3 gap-3">
-        <StatCard label="Consumo de hoy" value={`C$${consumoHoy.toFixed(2)}`} icon={IconHome} accent="bg-[#16233D]" />
-        <StatCard label="Consumo del mes" value={`C$${consumoMes.toFixed(2)}`} icon={IconWallet} accent="bg-amber-500" />
-        <StatCard label="Consumo del año" value={`C$${consumoAno.toFixed(2)}`} icon={IconChart} accent="bg-rose-500" />
+        <StatCard label="Consumo de hoy" value={`${formatearMonto(consumoHoy.toFixed(2))}`} icon={IconHome} accent="bg-[#16233D]" />
+        <StatCard label="Consumo del mes" value={`${formatearMonto(consumoMes.toFixed(2))}`} icon={IconWallet} accent="bg-amber-500" />
+        <StatCard label="Consumo del año" value={`${formatearMonto(consumoAno.toFixed(2))}`} icon={IconChart} accent="bg-rose-500" />
       </div>
 
       <div className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-white/10 rounded-2xl p-5">
@@ -2227,7 +2256,7 @@ function PaginaConsumoHogar({ productos, registros, cargando, error, onRegistrar
 
         {producto && cantidadNum > 0 && (
           <div className="bg-slate-50 dark:bg-black rounded-lg p-3 text-xs text-slate-500 dark:text-white mb-3">
-            Costo (precio de compra, no de venta): C${costoUnitario.toFixed(2)} x {cantidadNum} = <b className="text-rose-600 dark:text-rose-400">C${costoTotal.toFixed(2)}</b>
+            Costo (precio de compra, no de venta): {formatearMonto(costoUnitario.toFixed(2))} x {cantidadNum} = <b className="text-rose-600 dark:text-rose-400">{formatearMonto(costoTotal.toFixed(2))}</b>
           </div>
         )}
 
@@ -2251,7 +2280,7 @@ function PaginaConsumoHogar({ productos, registros, cargando, error, onRegistrar
                   <div className="text-xs text-slate-400 dark:text-white/40">{r.nota ? `${r.nota} · ` : ""}{new Date(r.creado_en).toLocaleString()}</div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <div className="text-sm font-mono font-semibold text-rose-600 dark:text-rose-400">C${Number(r.costo_total).toFixed(2)}</div>
+                  <div className="text-sm font-mono font-semibold text-rose-600 dark:text-rose-400">{formatearMonto(Number(r.costo_total).toFixed(2))}</div>
                   <button onClick={() => eliminarRegistro(r)} disabled={eliminandoId === r.id} title="Eliminar" className="text-slate-400 hover:text-rose-500 disabled:opacity-40 text-sm">🗑️</button>
                 </div>
               </div>
@@ -2435,17 +2464,17 @@ function PaginaDashboard({ productos, stockBajo, valorStock, gananciaAcumulada, 
         <p className="text-sm text-slate-500 dark:text-white mt-1">Resumen de tu negocio en tiempo real, conectado a la base de datos.</p>
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="Valor en stock" value={`C$${valorStock.toFixed(2)}`} icon={IconPackage} accent="bg-[#16233D]" onClick={onIrA ? () => onIrA("inventario") : undefined} />
+        <StatCard label="Valor en stock" value={`${formatearMonto(valorStock.toFixed(2))}`} icon={IconPackage} accent="bg-[#16233D]" onClick={onIrA ? () => onIrA("inventario") : undefined} />
         <StatCard label="Unidades vendidas" value={unidadesVendidas} icon={IconCart} accent="bg-[#2471A3]" onClick={onIrA ? () => onIrA("estadisticas") : undefined} />
-        {verGanancias && <StatCard label="Ganancia acumulada" value={`C$${gananciaAcumulada.toFixed(2)}`} icon={IconChart} accent="bg-emerald-600" onClick={onIrA ? () => onIrA("estadisticas") : undefined} />}
+        {verGanancias && <StatCard label="Ganancia acumulada" value={`${formatearMonto(gananciaAcumulada.toFixed(2))}`} icon={IconChart} accent="bg-emerald-600" onClick={onIrA ? () => onIrA("estadisticas") : undefined} />}
         <StatCard label="Productos en alerta" value={stockBajo} icon={IconAlert} accent="bg-rose-600" onClick={onIrA ? () => onIrA("inventario") : undefined} />
       </div>
       <div>
         <h2 className="text-sm font-semibold text-slate-500 dark:text-white/60 uppercase tracking-wide mb-3">Cuentas por cobrar</h2>
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-          <StatCard label="Total por cobrar" value={`C$${totalPorCobrar.toFixed(2)}`} icon={IconCard} accent="bg-[#16233D]" onClick={onIrA ? () => onIrA("cuentas") : undefined} />
+          <StatCard label="Total por cobrar" value={`${formatearMonto(totalPorCobrar.toFixed(2))}`} icon={IconCard} accent="bg-[#16233D]" onClick={onIrA ? () => onIrA("cuentas") : undefined} />
           <StatCard label="Clientes pendientes" value={clientesPendientes} icon={IconUsers} accent="bg-amber-500" onClick={onIrA ? () => onIrA("cuentas") : undefined} />
-          <StatCard label="Recuperado este mes" value={`C$${recuperadoMes.toFixed(2)}`} icon={IconWallet} accent="bg-emerald-600" />
+          <StatCard label="Recuperado este mes" value={`${formatearMonto(recuperadoMes.toFixed(2))}`} icon={IconWallet} accent="bg-emerald-600" />
         </div>
       </div>
       <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl p-5">
@@ -2635,7 +2664,7 @@ function PaginaCaja() {
     const monto = parseFloat(montoApertura) || 0;
     if (monto <= 0) { mostrarError("Poné un monto mayor a 0"); return; }
     if (monto > saldoGuardado) {
-      mostrarError(`No hay suficiente dinero guardado para abrir con C$${monto.toFixed(2)}. Guardado actual: C$${saldoGuardado.toFixed(2)}. Editá el dinero guardado primero si hace falta.`);
+      mostrarError(`No hay suficiente dinero guardado para abrir con ${formatearMonto(monto.toFixed(2))}. Guardado actual: ${formatearMonto(saldoGuardado.toFixed(2))}. Editá el dinero guardado primero si hace falta.`);
       return;
     }
     setProcesando(true);
@@ -2693,8 +2722,8 @@ function PaginaCaja() {
   const moverDineroGuardado = async () => {
     const monto = parseFloat(montoGuardado) || 0;
     if (monto <= 0) { mostrarError("Poné un monto mayor a 0"); return; }
-    if (tipoGuardado === "retiro" && monto > saldoActual) { mostrarError(`No hay suficiente dinero en la caja. Saldo actual: C$${saldoActual.toFixed(2)}`); return; }
-    if (tipoGuardado === "ingreso" && monto > saldoGuardado) { mostrarError(`No hay suficiente dinero guardado. Guardado actual: C$${saldoGuardado.toFixed(2)}`); return; }
+    if (tipoGuardado === "retiro" && monto > saldoActual) { mostrarError(`No hay suficiente dinero en la caja. Saldo actual: ${formatearMonto(saldoActual.toFixed(2))}`); return; }
+    if (tipoGuardado === "ingreso" && monto > saldoGuardado) { mostrarError(`No hay suficiente dinero guardado. Guardado actual: ${formatearMonto(saldoGuardado.toFixed(2))}`); return; }
     setProcesandoGuardado(true);
     try {
       const desc = descGuardado.trim() || (tipoGuardado === "retiro" ? "Retiro hacia dinero guardado" : "Ingreso desde dinero guardado");
@@ -2736,7 +2765,7 @@ function PaginaCaja() {
 
   const ponerEnCeroGuardado = async () => {
     if (saldoGuardado === 0) return;
-    if (!(await confirmarAccion(`¿Poner en cero el dinero guardado? Ahora mismo hay C$${saldoGuardado.toFixed(2)}. Se guarda en el historial, no se puede deshacer.`))) return;
+    if (!(await confirmarAccion(`¿Poner en cero el dinero guardado? Ahora mismo hay ${formatearMonto(saldoGuardado.toFixed(2))}. Se guarda en el historial, no se puede deshacer.`))) return;
     setGuardandoAjusteGuardado(true);
     try {
       await supaApi.crearMovimientoGuardado({ tipo: "ingreso", monto: saldoGuardado, descripcion: "Guardado puesto en cero" });
@@ -2757,7 +2786,7 @@ function PaginaCaja() {
       {error && <div className="bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-sm rounded-lg p-3">{error}</div>}
 
       <div className="max-w-sm">
-        <StatCard label="💰 Dinero guardado (fuera de caja)" value={`C$${saldoGuardado.toFixed(2)}`} icon={IconWallet} accent="bg-amber-500" onClick={() => setPanelAbierto("guardado")} />
+        <StatCard label="💰 Dinero guardado (fuera de caja)" value={`${formatearMonto(saldoGuardado.toFixed(2))}`} icon={IconWallet} accent="bg-amber-500" onClick={() => setPanelAbierto("guardado")} />
       </div>
 
       {!sesion ? (
@@ -2778,7 +2807,7 @@ function PaginaCaja() {
                   <div key={h.id} className="flex justify-between items-center text-xs text-slate-500 dark:text-white py-1">
                     <span>{new Date(h.fecha_cierre).toLocaleDateString()}</span>
                     <div className="flex items-center gap-2">
-                      <span className="font-mono">C${Number(h.monto_inicial).toFixed(2)} → C${Number(h.monto_final).toFixed(2)}</span>
+                      <span className="font-mono">{formatearMonto(Number(h.monto_inicial).toFixed(2))} → {formatearMonto(Number(h.monto_final).toFixed(2))}</span>
                       <button onClick={() => eliminarSesionHistorial(h)} className="text-slate-400 hover:text-rose-500">🗑️</button>
                     </div>
                   </div>
@@ -2790,10 +2819,10 @@ function PaginaCaja() {
       ) : (
         <div className="space-y-5">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatCard label="Monto inicial" value={`C$${Number(sesion.monto_inicial).toFixed(2)}`} icon={IconWallet} accent="bg-[#16233D]" onClick={() => { setMontoInicialEditar(String(sesion.monto_inicial)); setPanelAbierto("monto_inicial"); }} />
-            <StatCard label="Ingresos" value={`C$${totalIngresos.toFixed(2)}`} icon={IconChart} accent="bg-emerald-600" onClick={() => setPanelAbierto("ingresos")} />
-            <StatCard label="Gastos" value={`C$${totalGastos.toFixed(2)}`} icon={IconAlert} accent="bg-rose-600" onClick={() => setPanelAbierto("gastos")} />
-            <StatCard label="Saldo actual" value={`C$${saldoActual.toFixed(2)}`} icon={IconCart} accent="bg-[#2471A3]" onClick={() => setPanelAbierto("saldo")} />
+            <StatCard label="Monto inicial" value={`${formatearMonto(Number(sesion.monto_inicial).toFixed(2))}`} icon={IconWallet} accent="bg-[#16233D]" onClick={() => { setMontoInicialEditar(String(sesion.monto_inicial)); setPanelAbierto("monto_inicial"); }} />
+            <StatCard label="Ingresos" value={`${formatearMonto(totalIngresos.toFixed(2))}`} icon={IconChart} accent="bg-emerald-600" onClick={() => setPanelAbierto("ingresos")} />
+            <StatCard label="Gastos" value={`${formatearMonto(totalGastos.toFixed(2))}`} icon={IconAlert} accent="bg-rose-600" onClick={() => setPanelAbierto("gastos")} />
+            <StatCard label="Saldo actual" value={`${formatearMonto(saldoActual.toFixed(2))}`} icon={IconCart} accent="bg-[#2471A3]" onClick={() => setPanelAbierto("saldo")} />
           </div>
 
           <div className="grid lg:grid-cols-2 gap-4">
@@ -2829,7 +2858,7 @@ function PaginaCaja() {
                     </div>
                     <div className="flex items-center gap-2">
                       <div className={`font-mono font-semibold text-sm ${m.tipo === "ingreso" ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
-                        {m.tipo === "ingreso" ? "+" : "-"}C${Number(m.monto).toFixed(2)}
+                        {m.tipo === "ingreso" ? "+" : "-"}{formatearMonto(Number(m.monto).toFixed(2))}
                       </div>
                       <button onClick={() => eliminarMovimiento(m)} className="text-slate-400 hover:text-rose-500 text-sm">🗑️</button>
                     </div>
@@ -2841,7 +2870,7 @@ function PaginaCaja() {
 
           <div className="bg-white dark:bg-black border border-amber-300/50 dark:border-amber-500/20 rounded-2xl p-5">
             <h2 className="font-semibold text-slate-800 dark:text-white text-sm mb-1">Mover dinero guardado</h2>
-            <p className="text-xs text-slate-400 dark:text-white/40 mb-3">Dinero guardado actual: <b className="text-amber-600 dark:text-amber-400">C${saldoGuardado.toFixed(2)}</b></p>
+            <p className="text-xs text-slate-400 dark:text-white/40 mb-3">Dinero guardado actual: <b className="text-amber-600 dark:text-amber-400">{formatearMonto(saldoGuardado.toFixed(2))}</b></p>
             <div className="flex gap-2 mb-3">
               <button onClick={() => setTipoGuardado("retiro")} className={`flex-1 py-2 rounded-lg text-sm font-medium ${tipoGuardado === "retiro" ? "bg-amber-500 text-[#16233D]" : "bg-slate-100 dark:bg-neutral-900 text-slate-600 dark:text-white"}`}>📥 Retirar de la caja</button>
               <button onClick={() => setTipoGuardado("ingreso")} className={`flex-1 py-2 rounded-lg text-sm font-medium ${tipoGuardado === "ingreso" ? "bg-amber-500 text-[#16233D]" : "bg-slate-100 dark:bg-neutral-900 text-slate-600 dark:text-white"}`}>📤 Meter a la caja</button>
@@ -2869,7 +2898,7 @@ function PaginaCaja() {
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <span className={`font-mono font-semibold ${m.tipo === "retiro" ? "text-amber-600 dark:text-amber-400" : "text-[#2471A3]"}`}>
-                        {m.tipo === "retiro" ? "+" : "-"}C${Number(m.monto).toFixed(2)}
+                        {m.tipo === "retiro" ? "+" : "-"}{formatearMonto(Number(m.monto).toFixed(2))}
                       </span>
                       <button onClick={() => eliminarMovimientoGuardado(m)} className="text-slate-400 hover:text-rose-500">🗑️</button>
                     </div>
@@ -2888,23 +2917,23 @@ function PaginaCaja() {
             <p className="text-xs text-slate-400 dark:text-white/40 mb-4">Revisá antes de cerrar la caja.</p>
 
             <div className="space-y-2 text-sm mb-4">
-              <div className="flex justify-between"><span className="text-slate-500 dark:text-white/60">Saldo inicial en caja</span><span className="font-mono text-slate-700 dark:text-white">C${Number(sesion.monto_inicial).toFixed(2)}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500 dark:text-white/60">+ Ventas del día</span><span className="font-mono text-emerald-600 dark:text-emerald-400">C${totalVentasHoy.toFixed(2)}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500 dark:text-white/60">+ Otras entradas a caja</span><span className="font-mono text-emerald-600 dark:text-emerald-400">C${ingresosOtros.toFixed(2)}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500 dark:text-white/60">+ Ingresado desde guardado</span><span className="font-mono text-emerald-600 dark:text-emerald-400">C${ingresoDesdeGuardado.toFixed(2)}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500 dark:text-white/60">− Retirado de caja</span><span className="font-mono text-rose-600 dark:text-rose-400">C${totalRetiradoDeCaja.toFixed(2)}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500 dark:text-white/60">Saldo inicial en caja</span><span className="font-mono text-slate-700 dark:text-white">{formatearMonto(Number(sesion.monto_inicial).toFixed(2))}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500 dark:text-white/60">+ Ventas del día</span><span className="font-mono text-emerald-600 dark:text-emerald-400">{formatearMonto(totalVentasHoy.toFixed(2))}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500 dark:text-white/60">+ Otras entradas a caja</span><span className="font-mono text-emerald-600 dark:text-emerald-400">{formatearMonto(ingresosOtros.toFixed(2))}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500 dark:text-white/60">+ Ingresado desde guardado</span><span className="font-mono text-emerald-600 dark:text-emerald-400">{formatearMonto(ingresoDesdeGuardado.toFixed(2))}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500 dark:text-white/60">− Retirado de caja</span><span className="font-mono text-rose-600 dark:text-rose-400">{formatearMonto(totalRetiradoDeCaja.toFixed(2))}</span></div>
               <div className="border-t border-slate-100 dark:border-white/10 pt-2 flex justify-between font-semibold">
                 <span className="text-slate-700 dark:text-white">Saldo final esperado</span>
-                <span className="font-mono text-slate-800 dark:text-white">C${saldoFinalEsperado.toFixed(2)}</span>
+                <span className="font-mono text-slate-800 dark:text-white">{formatearMonto(saldoFinalEsperado.toFixed(2))}</span>
               </div>
               <div className="flex justify-between pt-1">
                 <span className="text-slate-500 dark:text-white/60">💰 Dinero guardado (actualizado)</span>
-                <span className="font-mono text-amber-600 dark:text-amber-400">C${saldoGuardado.toFixed(2)}</span>
+                <span className="font-mono text-amber-600 dark:text-amber-400">{formatearMonto(saldoGuardado.toFixed(2))}</span>
               </div>
             </div>
 
             <p className="text-xs text-slate-400 dark:text-white/40 mb-3">
-              Vendiste C${totalVentasHoy.toFixed(2)}, retiraste C${totalRetiradoDeCaja.toFixed(2)}, ingresaste C${ingresoDesdeGuardado.toFixed(2)} desde el dinero guardado — deberías tener C${saldoFinalEsperado.toFixed(2)} físicamente en caja.
+              Vendiste {formatearMonto(totalVentasHoy.toFixed(2))}, retiraste {formatearMonto(totalRetiradoDeCaja.toFixed(2))}, ingresaste {formatearMonto(ingresoDesdeGuardado.toFixed(2))} desde el dinero guardado — deberías tener {formatearMonto(saldoFinalEsperado.toFixed(2))} físicamente en caja.
             </p>
 
             <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Saldo final contado (lo que realmente hay)</label>
@@ -2953,7 +2982,7 @@ function PaginaCaja() {
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <div className={`font-mono font-semibold text-sm ${panelAbierto === "ingresos" ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
-                      C${Number(m.monto).toFixed(2)}
+                      {formatearMonto(Number(m.monto).toFixed(2))}
                     </div>
                     <button onClick={() => { setMovimientoEditandoEsGuardado(false); setMovimientoEditando(m); }} className="text-xs px-2 py-1 rounded border border-slate-200 dark:border-white/20 text-slate-600 dark:text-white">Editar</button>
                     <button onClick={() => eliminarMovimiento(m)} className="text-slate-400 hover:text-rose-500 text-sm">🗑️</button>
@@ -2973,7 +3002,7 @@ function PaginaCaja() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-40" onClick={() => setPanelAbierto(null)}>
           <div onClick={(e) => e.stopPropagation()} className="bg-white dark:bg-black rounded-2xl p-6 w-full max-w-md max-h-[85vh] overflow-y-auto">
             <h2 className="font-semibold text-slate-800 dark:text-white mb-1 font-display">Dinero guardado</h2>
-            <p className="text-xs text-slate-400 dark:text-white/40 mb-3">Actual: <b className="text-amber-600 dark:text-amber-400">C${saldoGuardado.toFixed(2)}</b></p>
+            <p className="text-xs text-slate-400 dark:text-white/40 mb-3">Actual: <b className="text-amber-600 dark:text-amber-400">{formatearMonto(saldoGuardado.toFixed(2))}</b></p>
 
             {editandoGuardado ? (
               <div className="mb-4 bg-slate-50 dark:bg-neutral-900 rounded-lg p-3">
@@ -3024,7 +3053,7 @@ function PaginaCaja() {
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <span className={`font-mono font-semibold ${m.tipo === "retiro" ? "text-amber-600 dark:text-amber-400" : "text-[#2471A3]"}`}>
-                      {m.tipo === "retiro" ? "+" : "-"}C${Number(m.monto).toFixed(2)}
+                      {m.tipo === "retiro" ? "+" : "-"}{formatearMonto(Number(m.monto).toFixed(2))}
                     </span>
                     <button onClick={() => { setMovimientoEditandoEsGuardado(true); setMovimientoEditando(m); }} className="text-xs px-2 py-1 rounded border border-slate-200 dark:border-white/20 text-slate-600 dark:text-white">Editar</button>
                     <button onClick={() => eliminarMovimientoGuardado(m)} className="text-slate-400 hover:text-rose-500 text-sm">🗑️</button>
@@ -3044,14 +3073,14 @@ function PaginaCaja() {
           <div onClick={(e) => e.stopPropagation()} className="bg-white dark:bg-black rounded-2xl p-6 w-full max-w-sm">
             <h2 className="font-semibold text-slate-800 dark:text-white mb-4 font-display">¿Cómo se calculó el saldo actual?</h2>
             <div className="space-y-2 text-sm mb-4">
-              <div className="flex justify-between"><span className="text-slate-500 dark:text-white/60">Monto inicial</span><span className="font-mono text-slate-700 dark:text-white">C${Number(sesion.monto_inicial).toFixed(2)}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500 dark:text-white/60">+ Otros ingresos</span><span className="font-mono text-emerald-600 dark:text-emerald-400">C${ingresosOtros.toFixed(2)}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500 dark:text-white/60">+ Dinero regresado a caja</span><span className="font-mono text-emerald-600 dark:text-emerald-400">C${ingresoDesdeGuardado.toFixed(2)}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500 dark:text-white/60">− Otros gastos</span><span className="font-mono text-rose-600 dark:text-rose-400">C${gastosOtros.toFixed(2)}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500 dark:text-white/60">− Retiros hacia guardado</span><span className="font-mono text-rose-600 dark:text-rose-400">C${retirosHaciaGuardado.toFixed(2)}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500 dark:text-white/60">Monto inicial</span><span className="font-mono text-slate-700 dark:text-white">{formatearMonto(Number(sesion.monto_inicial).toFixed(2))}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500 dark:text-white/60">+ Otros ingresos</span><span className="font-mono text-emerald-600 dark:text-emerald-400">{formatearMonto(ingresosOtros.toFixed(2))}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500 dark:text-white/60">+ Dinero regresado a caja</span><span className="font-mono text-emerald-600 dark:text-emerald-400">{formatearMonto(ingresoDesdeGuardado.toFixed(2))}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500 dark:text-white/60">− Otros gastos</span><span className="font-mono text-rose-600 dark:text-rose-400">{formatearMonto(gastosOtros.toFixed(2))}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500 dark:text-white/60">− Retiros hacia guardado</span><span className="font-mono text-rose-600 dark:text-rose-400">{formatearMonto(retirosHaciaGuardado.toFixed(2))}</span></div>
               <div className="border-t border-slate-100 dark:border-white/10 pt-2 flex justify-between font-semibold">
                 <span className="text-slate-700 dark:text-white">Saldo actual</span>
-                <span className="font-mono text-slate-800 dark:text-white">C${saldoActual.toFixed(2)}</span>
+                <span className="font-mono text-slate-800 dark:text-white">{formatearMonto(saldoActual.toFixed(2))}</span>
               </div>
             </div>
             <p className="text-[11px] text-slate-400 dark:text-white/40 mb-4">Este saldo no incluye las ventas del día — esas se ven en el resumen al cerrar la caja.</p>
@@ -3157,7 +3186,7 @@ function PaginaPerdidas({ productos, onActualizarProducto, onRecargarProductos }
           </select>
           {productoSeleccionado && cantidadNum > 0 && (
             <div className="bg-rose-50 dark:bg-rose-900/20 rounded-lg p-3 text-xs text-rose-700 dark:text-rose-300 mb-3">
-              Valor perdido estimado: <b>C${valorPerdido.toFixed(2)}</b>
+              Valor perdido estimado: <b>{formatearMonto(valorPerdido.toFixed(2))}</b>
             </div>
           )}
           <button disabled={procesando} onClick={registrar} className="w-full bg-rose-600 text-white font-semibold text-sm px-4 py-2 rounded-lg disabled:opacity-50 flex items-center justify-center gap-2">
@@ -3166,7 +3195,7 @@ function PaginaPerdidas({ productos, onActualizarProducto, onRecargarProductos }
         </div>
 
         <div className="lg:col-span-2 space-y-4">
-          <StatCard label="Total perdido acumulado" value={`C$${totalPerdido.toFixed(2)}`} icon={IconAlert} accent="bg-rose-600" />
+          <StatCard label="Total perdido acumulado" value={`${formatearMonto(totalPerdido.toFixed(2))}`} icon={IconAlert} accent="bg-rose-600" />
           <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl p-5">
             <h2 className="font-semibold text-slate-800 dark:text-white text-sm mb-3">Historial de pérdidas</h2>
             {cargando ? (
@@ -3182,7 +3211,7 @@ function PaginaPerdidas({ productos, onActualizarProducto, onRecargarProductos }
                       <div className="text-xs text-slate-400">{p.motivo} · {p.cantidad} u. · {new Date(p.creado_en).toLocaleString()}</div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <div className="font-mono font-semibold text-sm text-rose-600 dark:text-rose-400">-C${Number(p.valor_perdido).toFixed(2)}</div>
+                      <div className="font-mono font-semibold text-sm text-rose-600 dark:text-rose-400">-{formatearMonto(Number(p.valor_perdido).toFixed(2))}</div>
                       <button onClick={() => eliminarPerdida(p)} className="text-slate-400 hover:text-rose-500 text-sm">🗑️</button>
                     </div>
                   </div>
@@ -3254,7 +3283,7 @@ function ModalVentaCantidad({ producto, onConfirmar, onCerrar, guardando }) {
 
         <div className="bg-slate-50 dark:bg-neutral-900 rounded-lg p-3 text-sm text-slate-700 dark:text-white flex items-center justify-between mb-4">
           <span>Total de la venta</span>
-          <span className="font-mono font-bold">C${total}</span>
+          <span className="font-mono font-bold">{formatearMonto(total)}</span>
         </div>
 
         <div className="flex gap-2">
@@ -3275,7 +3304,7 @@ function ModalAccionesProducto({ producto, onEditar, onEliminar, onCerrar }) {
     <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-40" onClick={onCerrar}>
       <div onClick={(e) => e.stopPropagation()} className="bg-white dark:bg-black rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-xs">
         <div className="font-semibold text-slate-800 dark:text-white mb-1 font-display truncate">{producto.nombre}</div>
-        <div className="text-xs text-slate-400 dark:text-white/40 mb-4">Stock: {producto.cantidad} · C${Number(producto.venta).toFixed(2)}</div>
+        <div className="text-xs text-slate-400 dark:text-white/40 mb-4">Stock: {producto.cantidad} · {formatearMonto(Number(producto.venta).toFixed(2))}</div>
         <div className="space-y-1.5">
           <button onClick={onEditar} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5">
             ✏️ Editar producto
@@ -3537,7 +3566,7 @@ function ModalProducto({ abierto, producto, onGuardar, onCerrar, guardando, onAc
           {/* Calculadora de precio */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Costo de compra (C$)</label>
+              <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">{`Costo de compra (${simboloMonedaActual()})`}</label>
               <input
                 type="number"
                 value={form.costo}
@@ -3546,7 +3575,7 @@ function ModalProducto({ abierto, producto, onGuardar, onCerrar, guardando, onAc
               />
             </div>
             <div>
-              <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Precio de venta (C$)</label>
+              <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">{`Precio de venta (${simboloMonedaActual()})`}</label>
               <input
                 type="number"
                 value={form.venta}
@@ -3613,7 +3642,7 @@ function ModalProducto({ abierto, producto, onGuardar, onCerrar, guardando, onAc
                 <span className="px-2 py-0.5 rounded-full bg-white dark:bg-black text-emerald-600 dark:text-emerald-400 font-semibold">{margenReal}% margen</span>
               </div>
               <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
-                +C${ganancia.toFixed(2)} <span className="text-xs font-normal text-slate-500 dark:text-white">para tu bolsillo</span>
+                +{formatearMonto(ganancia.toFixed(2))} <span className="text-xs font-normal text-slate-500 dark:text-white">para tu bolsillo</span>
               </div>
             </div>
           )}
@@ -3624,7 +3653,7 @@ function ModalProducto({ abierto, producto, onGuardar, onCerrar, guardando, onAc
               onClick={() => setVentaManual(true)}
               className="w-full px-4 py-2.5 rounded-lg text-sm font-semibold bg-[#16233D] text-white flex items-center justify-center gap-2"
             >
-              ✓ Usar precio de C${ventaSugerida.toFixed(2)}
+              ✓ Usar precio de {formatearMonto(ventaSugerida.toFixed(2))}
             </button>
           )}
 
@@ -3651,7 +3680,7 @@ function ModalProducto({ abierto, producto, onGuardar, onCerrar, guardando, onAc
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Precio de venta por caja (C$)</label>
+                    <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">{`Precio de venta por caja (${simboloMonedaActual()})`}</label>
                     <input
                       type="number"
                       value={form.precio_caja}
@@ -3667,7 +3696,7 @@ function ModalProducto({ abierto, producto, onGuardar, onCerrar, guardando, onAc
                       <span className="px-2 py-0.5 rounded-full bg-white dark:bg-black text-emerald-600 dark:text-emerald-400 font-semibold">{margenCajaReal}% margen</span>
                     </div>
                     <div className="text-lg font-bold text-emerald-600 dark:text-emerald-400">
-                      +C${gananciaCaja.toFixed(2)} <span className="text-xs font-normal text-slate-500 dark:text-white">por caja de {unidadesCajaNum} unidades</span>
+                      +{formatearMonto(gananciaCaja.toFixed(2))} <span className="text-xs font-normal text-slate-500 dark:text-white">por caja de {unidadesCajaNum} unidades</span>
                     </div>
                   </div>
                 )}
@@ -3677,7 +3706,7 @@ function ModalProducto({ abierto, producto, onGuardar, onCerrar, guardando, onAc
                     onClick={() => setPrecioCajaManual(true)}
                     className="w-full px-4 py-2 rounded-lg text-xs font-semibold bg-[#16233D] text-white flex items-center justify-center gap-2"
                   >
-                    ✓ Usar precio sugerido de C${precioCajaSugerido.toFixed(2)}
+                    ✓ Usar precio sugerido de {formatearMonto(precioCajaSugerido.toFixed(2))}
                   </button>
                 )}
               </div>
@@ -3822,10 +3851,10 @@ function TarjetaProductoGrid({ producto, puedeEditar, verCostos, cantidadEnCarri
         <div className="text-sm font-semibold text-slate-800 dark:text-white truncate" title={producto.nombre}>{producto.nombre}</div>
         <span className="text-xs text-slate-400 dark:text-white/40 font-mono">Stock {producto.cantidad}</span>
         <div className="flex flex-col mt-1">
-          <span className="text-base font-bold text-[#16233D] dark:text-[#E3A73B] font-mono">C${Number(producto.venta).toFixed(2)}</span>
+          <span className="text-base font-bold text-[#16233D] dark:text-[#E3A73B] font-mono">{formatearMonto(Number(producto.venta).toFixed(2))}</span>
           {verCostos && <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-mono">{margen}% margen</span>}
           {!!producto.precio_caja && !!producto.unidades_por_caja && (
-            <span className="text-[11px] text-slate-400 dark:text-white/40 font-mono">📦 C${Number(producto.precio_caja).toFixed(2)} / caja ({producto.unidades_por_caja}u)</span>
+            <span className="text-[11px] text-slate-400 dark:text-white/40 font-mono">📦 {formatearMonto(Number(producto.precio_caja).toFixed(2))} / caja ({producto.unidades_por_caja}u)</span>
           )}
         </div>
       </div>
@@ -3879,14 +3908,14 @@ function CarritoVentaModal({ abierto, items, productos, clientes, onCambiarCanti
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-medium text-slate-700 dark:text-white truncate">{producto.nombre}</div>
-                  <div className="text-xs text-slate-400 dark:text-white/40 font-mono">C${Number(producto.venta).toFixed(2)} / u</div>
+                  <div className="text-xs text-slate-400 dark:text-white/40 font-mono">{formatearMonto(Number(producto.venta).toFixed(2))} / u</div>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
                   <button onClick={() => onCambiarCantidad(producto.id, -1)} className="w-6 h-6 rounded-full border border-slate-200 dark:border-white/20 text-slate-600 dark:text-white flex items-center justify-center text-sm">−</button>
                   <span className="text-sm font-semibold w-4 text-center font-mono">{cantidad}</span>
                   <button onClick={() => onCambiarCantidad(producto.id, 1)} disabled={cantidad >= producto.cantidad} className="w-6 h-6 rounded-full border border-slate-200 dark:border-white/20 text-slate-600 dark:text-white flex items-center justify-center text-sm disabled:opacity-30">+</button>
                 </div>
-                <div className="text-sm font-semibold text-[#16233D] dark:text-[#E3A73B] font-mono w-16 text-right shrink-0">C${(cantidad * Number(producto.venta)).toFixed(2)}</div>
+                <div className="text-sm font-semibold text-[#16233D] dark:text-[#E3A73B] font-mono w-16 text-right shrink-0">{formatearMonto((cantidad * Number(producto.venta)).toFixed(2))}</div>
                 <button onClick={() => onQuitar(producto.id)} className="text-slate-300 dark:text-white/30 hover:text-rose-500 text-sm shrink-0">🗑️</button>
               </div>
             ))}
@@ -3896,7 +3925,7 @@ function CarritoVentaModal({ abierto, items, productos, clientes, onCambiarCanti
         <div className="border-t border-slate-100 dark:border-white/10 pt-3">
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm text-slate-500 dark:text-white">{lineas.length} producto(s)</span>
-            <span className="text-xl font-bold text-[#16233D] dark:text-white font-mono">C${total.toFixed(2)}</span>
+            <span className="text-xl font-bold text-[#16233D] dark:text-white font-mono">{formatearMonto(total.toFixed(2))}</span>
           </div>
 
           <div className="flex gap-2 mb-3">
@@ -3913,7 +3942,7 @@ function CarritoVentaModal({ abierto, items, productos, clientes, onCambiarCanti
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-xs text-slate-500 dark:text-white">Cambio</span>
-                <span className="text-sm font-mono font-semibold text-slate-700 dark:text-white">C${cambio.toFixed(2)}</span>
+                <span className="text-sm font-mono font-semibold text-slate-700 dark:text-white">{formatearMonto(cambio.toFixed(2))}</span>
               </div>
             </div>
           ) : (
@@ -4234,7 +4263,7 @@ function PaginaHistorial({ productos, onActualizarProducto, onRecargarProductos 
                 <div className="flex items-center gap-2">
                   {e.monto !== null && (
                     <div className={`font-mono font-semibold text-sm ${e.positivo ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
-                      {e.positivo ? "+" : "-"}C${Number(e.monto).toFixed(2)}
+                      {e.positivo ? "+" : "-"}{formatearMonto(Number(e.monto).toFixed(2))}
                     </div>
                   )}
                   {e.tipo !== "producto_agregado" && (
@@ -4350,9 +4379,9 @@ function PaginaEstadisticas({ consumoHogar }) {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="Unidades vendidas" value={unidadesVendidas} icon={IconCart} accent="bg-[#2471A3]" />
-        <StatCard label="Ganancia total" value={`C$${gananciaTotal.toFixed(2)}`} icon={IconChart} accent="bg-emerald-600" />
-        <StatCard label="Pérdidas totales" value={`C$${perdidaTotal.toFixed(2)}`} icon={IconAlert} accent="bg-rose-600" />
-        <StatCard label="Ganancia neta" value={`C$${(gananciaTotal - perdidaTotal).toFixed(2)}`} icon={IconWallet} accent="bg-[#16233D]" />
+        <StatCard label="Ganancia total" value={`${formatearMonto(gananciaTotal.toFixed(2))}`} icon={IconChart} accent="bg-emerald-600" />
+        <StatCard label="Pérdidas totales" value={`${formatearMonto(perdidaTotal.toFixed(2))}`} icon={IconAlert} accent="bg-rose-600" />
+        <StatCard label="Ganancia neta" value={`${formatearMonto((gananciaTotal - perdidaTotal).toFixed(2))}`} icon={IconWallet} accent="bg-[#16233D]" />
       </div>
 
       <div className="bg-white dark:bg-black border border-slate-200 dark:border-white/10 rounded-2xl p-5">
@@ -4360,19 +4389,19 @@ function PaginaEstadisticas({ consumoHogar }) {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <div>
             <div className="text-[11px] text-slate-400 dark:text-white/40 uppercase tracking-wide">Total vendido</div>
-            <div className="text-lg font-bold font-mono text-slate-800 dark:text-white">C${totalVendidoMes.toFixed(2)}</div>
+            <div className="text-lg font-bold font-mono text-slate-800 dark:text-white">{formatearMonto(totalVendidoMes.toFixed(2))}</div>
           </div>
           <div>
             <div className="text-[11px] text-slate-400 dark:text-white/40 uppercase tracking-wide">Ganancia</div>
-            <div className="text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400">C${gananciaMes.toFixed(2)}</div>
+            <div className="text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400">{formatearMonto(gananciaMes.toFixed(2))}</div>
           </div>
           <div>
             <div className="text-[11px] text-slate-400 dark:text-white/40 uppercase tracking-wide">🏠 Consumo del hogar</div>
-            <div className="text-lg font-bold font-mono text-rose-600 dark:text-rose-400">C${consumoHogarMes.toFixed(2)}</div>
+            <div className="text-lg font-bold font-mono text-rose-600 dark:text-rose-400">{formatearMonto(consumoHogarMes.toFixed(2))}</div>
           </div>
           <div>
             <div className="text-[11px] text-slate-400 dark:text-white/40 uppercase tracking-wide">Ganancia real</div>
-            <div className="text-lg font-bold font-mono text-[#E3A73B]">C${gananciaRealMes.toFixed(2)}</div>
+            <div className="text-lg font-bold font-mono text-[#E3A73B]">{formatearMonto(gananciaRealMes.toFixed(2))}</div>
           </div>
         </div>
       </div>
@@ -4383,7 +4412,7 @@ function PaginaEstadisticas({ consumoHogar }) {
           {ventas.length === 0 ? <p className="text-sm text-slate-400 py-8 text-center">Todavía no hay ventas registradas</p> : (
             <GraficaCanvas tipo="line" id="ventasDia" data={{
               labels: dias.map(d => d.slice(5)),
-              datasets: [{ label: "Ventas (C$)", data: ventasPorDia, borderColor: "#2471A3", backgroundColor: "#2471A322", tension: 0.3, fill: true }],
+              datasets: [{ label: `Ventas (${simboloMonedaActual()})`, data: ventasPorDia, borderColor: "#2471A3", backgroundColor: "#2471A322", tension: 0.3, fill: true }],
             }} />
           )}
         </div>
@@ -4719,6 +4748,19 @@ function AppInterna({ sesion, onCerrarSesion }) {
   const [sidebarAbierto, setSidebarAbierto] = useState(false);
   const [nombreNegocio, setNombreNegocio] = useState("");
   const [logo, setLogo] = useState(null);
+  const [moneda, setMoneda] = useState({ codigo: "NIO", simbolo: "C$", nombre: "Córdoba nicaragüense", decimales: 2 });
+  const [monedasDisponibles, setMonedasDisponibles] = useState([]);
+  useEffect(() => {
+    supaApi.listarMonedas().then(setMonedasDisponibles).catch(() => setMonedasDisponibles([]));
+  }, []);
+  const cambiarMoneda = async (codigo) => {
+    const nueva = monedasDisponibles.find(m => m.codigo === codigo);
+    if (!nueva) return;
+    setMoneda(nueva);
+    actualizarMonedaActual(nueva);
+    try { await supaApi.guardarConfigNegocio({ moneda_codigo: codigo }); }
+    catch (e) { mostrarError("No se pudo guardar la moneda del negocio"); }
+  };
   const [nombreUsuario, setNombreUsuario] = useState(() => {
     const email = sesion?.user?.email || "";
     return email ? email.split("@")[0] : "";
@@ -4730,7 +4772,11 @@ function AppInterna({ sesion, onCerrarSesion }) {
     (async () => {
       try {
         const [config, perfil] = await Promise.all([supaApi.obtenerConfigNegocio(), supaApi.obtenerMiPerfil()]);
-        if (config) { setNombreNegocio(config.nombre || ""); setLogo(config.logo || null); }
+        if (config) {
+          setNombreNegocio(config.nombre || "");
+          setLogo(config.logo || null);
+          if (config.moneda) { setMoneda(config.moneda); actualizarMonedaActual(config.moneda); }
+        }
         if (perfil) {
           if (perfil.nombre) setNombreUsuario(perfil.nombre);
           setFotoPerfil(perfil.foto || null);
@@ -5136,7 +5182,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
     produccion: <PaginaProduccion productos={productos} lotes={lotes} cargando={cargandoLotes} error={errorLotes} onIniciar={handleIniciarLote} onAgregarIngrediente={handleAgregarIngredienteLote} onFinalizar={handleFinalizarLote} onEliminar={handleEliminarLote} />,
     notas: <ProximamenteCard titulo="Notas y recordatorios" descripcion="Un espacio para pedidos pendientes, ideas y tareas del negocio." icon={IconNote} />,
     usuarios: <PaginaUsuarios nombreNegocio={nombreNegocio} />,
-    configuracion: <PaginaConfiguracion nombreNegocio={nombreNegocio} setNombreNegocio={setNombreNegocio} logo={logo} onLogoChange={handleLogoChange} onQuitarLogo={quitarLogo} logoInputRef={logoInputRef} />,
+    configuracion: <PaginaConfiguracion nombreNegocio={nombreNegocio} setNombreNegocio={setNombreNegocio} logo={logo} onLogoChange={handleLogoChange} onQuitarLogo={quitarLogo} logoInputRef={logoInputRef} moneda={moneda} monedasDisponibles={monedasDisponibles} onCambiarMoneda={cambiarMoneda} />,
   };
 
   return (
