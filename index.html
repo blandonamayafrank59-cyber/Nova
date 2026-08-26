@@ -3290,7 +3290,7 @@ function ModalAccionesProducto({ producto, onEditar, onEliminar, onCerrar }) {
   );
 }
 
-const TIPO_ENTRADA_LABEL = { stock_anterior: "Stock anterior", compra: "Nueva compra", ajuste: "Ajuste" };
+const TIPO_ENTRADA_LABEL = { stock_anterior: "Stock anterior", compra: "Nueva compra", ajuste: "Ajuste", produccion: "Producción por lotes" };
 
 function SeccionEntradasInventario({ producto, onActualizarProducto, onRecargarProductos }) {
   const [entradas, setEntradas] = useState([]);
@@ -5087,6 +5087,26 @@ function AppInterna({ sesion, onCerrarSesion }) {
     const cambios = { estado: "finalizado" };
     if (unidades !== null && unidades !== undefined && !isNaN(unidades)) cambios.unidades_producidas = unidades;
     await supaApi.actualizarLote(lote.id, cambios);
+
+    // Al cerrar producción, las unidades producidas entran al inventario para poder venderlas
+    if (unidades !== null && unidades !== undefined && !isNaN(unidades) && unidades > 0) {
+      const nombreLote = (lote.producto_nombre || "").trim().toLowerCase();
+      const productoExistente = productos.find(p => (p.nombre || "").trim().toLowerCase() === nombreLote);
+      try {
+        if (productoExistente) {
+          try {
+            await supaApi.crearEntradaInventario({ producto_id: productoExistente.id, cantidad: unidades, tipo: "produccion", fecha: new Date().toISOString().slice(0, 10), nota: "Producción por lotes finalizada" });
+          } catch (e) { /* no bloquea si falla el registro de la entrada */ }
+          await supaApi.actualizarProducto(productoExistente.id, { cantidad: (productoExistente.cantidad || 0) + unidades });
+          mostrarAviso(`Se sumaron ${unidades} unidades de "${lote.producto_nombre}" al inventario.`);
+        } else {
+          await supaApi.crearProducto({ nombre: lote.producto_nombre, categoria: "", costo: 0, venta: 0, cantidad: unidades, minimo: 0 });
+          mostrarAviso(`Se creó "${lote.producto_nombre}" en inventario con ${unidades} unidades. Recordá ponerle su costo y precio de venta.`);
+        }
+        await cargarProductos();
+      } catch (e) { mostrarError("El lote se finalizó, pero no se pudo actualizar el inventario: " + e.message); }
+    }
+
     await cargarLotes();
   };
   const handleEliminarLote = async (id) => { await supaApi.eliminarLote(id); await cargarLotes(); };
