@@ -883,6 +883,59 @@ const supaApi = {
     const res = await peticionApi(`${SUPABASE_URL}/rest/v1/notas?id=eq.${id}&negocio_id=eq.${negocioId}`, { method: "DELETE" });
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo eliminar la nota"); }
   },
+
+  // --- Equipos (freezers, refris) y asignación de productos a cada uno ---
+  async listarEquipos() {
+    const negocioId = await obtenerMiNegocioId();
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/equipos?negocio_id=eq.${negocioId}&select=*&order=creado_en.asc`);
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudieron cargar los equipos"); }
+    return res.json();
+  },
+  async crearEquipo(equipo) {
+    const negocioId = await obtenerMiNegocioId();
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/equipos`, {
+      method: "POST",
+      extraHeaders: { Prefer: "return=representation" },
+      body: JSON.stringify({ ...equipo, negocio_id: negocioId }),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo crear el equipo"); }
+    return res.json();
+  },
+  async actualizarEquipo(id, cambios) {
+    const negocioId = await obtenerMiNegocioId();
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/equipos?id=eq.${id}&negocio_id=eq.${negocioId}`, {
+      method: "PATCH",
+      extraHeaders: { Prefer: "return=representation" },
+      body: JSON.stringify(cambios),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo actualizar el equipo"); }
+    return res.json();
+  },
+  async eliminarEquipo(id) {
+    const negocioId = await obtenerMiNegocioId();
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/equipos?id=eq.${id}&negocio_id=eq.${negocioId}`, { method: "DELETE" });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo eliminar el equipo"); }
+  },
+  async listarAsignacionesEquipos() {
+    const negocioId = await obtenerMiNegocioId();
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/producto_equipos?negocio_id=eq.${negocioId}&select=producto_id,equipo_id`);
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudieron cargar las asignaciones"); }
+    return res.json();
+  },
+  async asignarProductoAEquipo(productoId, equipoId) {
+    const negocioId = await obtenerMiNegocioId();
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/producto_equipos`, {
+      method: "POST",
+      extraHeaders: { Prefer: "return=minimal,resolution=ignore-duplicates" },
+      body: JSON.stringify({ producto_id: productoId, equipo_id: equipoId, negocio_id: negocioId }),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo asignar el producto"); }
+  },
+  async quitarProductoDeEquipo(productoId, equipoId) {
+    const negocioId = await obtenerMiNegocioId();
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/producto_equipos?producto_id=eq.${productoId}&equipo_id=eq.${equipoId}&negocio_id=eq.${negocioId}`, { method: "DELETE" });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo quitar el producto"); }
+  },
   async crearFiado(fiado) {
     const negocioId = await obtenerMiNegocioId();
     const res = await peticionApi(`${SUPABASE_URL}/rest/v1/fiados`, {
@@ -1131,14 +1184,15 @@ const IconGear      = (p) => <Ic {...p}>⚙️</Ic>;
 const IconCard      = (p) => <Ic {...p}>💳</Ic>;
 const IconHome      = (p) => <Ic {...p}>🏠</Ic>;
 const IconFactory   = (p) => <Ic {...p}>🏭</Ic>;
+const IconSnowflake = (p) => <Ic {...p}>🧊</Ic>;
 
 const ROL_LABEL = { administrador: "Administrador", dueno: "Dueño / Propietario", empleado: "Empleado", consulta: "Usuario de consulta" };
 
 const PERMISOS_POR_ROL = {
-  administrador: { dashboard: true, inventario: true, caja: true, perdidas: true, historial: true, estadisticas: true, cuentas: true, consumo: true, produccion: true, faltantes: true, notas: true, usuarios: true, configuracion: true, ver_costos: true, ver_ganancias: true, editar: true },
-  dueno:         { dashboard: true, inventario: true, caja: false, perdidas: true, historial: false, estadisticas: true, cuentas: true, consumo: false, produccion: false, faltantes: true, notas: true, usuarios: false, configuracion: false, ver_costos: true, ver_ganancias: true, editar: false },
-  empleado:      { dashboard: false, inventario: true, caja: true, perdidas: false, historial: false, estadisticas: false, cuentas: true, consumo: false, produccion: true, faltantes: true, notas: false, usuarios: false, configuracion: false, ver_costos: false, ver_ganancias: false, editar: true },
-  consulta:      { dashboard: true, inventario: true, caja: false, perdidas: true, historial: false, estadisticas: true, cuentas: true, consumo: false, produccion: false, faltantes: true, notas: false, usuarios: false, configuracion: false, ver_costos: false, ver_ganancias: true, editar: false },
+  administrador: { dashboard: true, inventario: true, caja: true, perdidas: true, historial: true, estadisticas: true, cuentas: true, consumo: true, produccion: true, faltantes: true, notas: true, equipos: true, usuarios: true, configuracion: true, ver_costos: true, ver_ganancias: true, editar: true },
+  dueno:         { dashboard: true, inventario: true, caja: false, perdidas: true, historial: false, estadisticas: true, cuentas: true, consumo: false, produccion: false, faltantes: true, notas: true, equipos: true, usuarios: false, configuracion: false, ver_costos: true, ver_ganancias: true, editar: false },
+  empleado:      { dashboard: false, inventario: true, caja: true, perdidas: false, historial: false, estadisticas: false, cuentas: true, consumo: false, produccion: true, faltantes: true, notas: false, equipos: true, usuarios: false, configuracion: false, ver_costos: false, ver_ganancias: false, editar: true },
+  consulta:      { dashboard: true, inventario: true, caja: false, perdidas: true, historial: false, estadisticas: true, cuentas: true, consumo: false, produccion: false, faltantes: true, notas: false, equipos: true, usuarios: false, configuracion: false, ver_costos: false, ver_ganancias: true, editar: false },
 };
 
 const NAV_ITEMS = [
@@ -1152,6 +1206,7 @@ const NAV_ITEMS = [
   { id: "consumo", label: "Consumo del hogar", icon: IconHome, listo: true, permiso: "consumo" },
   { id: "produccion", label: "Producción por lotes", icon: IconFactory, listo: true, permiso: "produccion" },
   { id: "faltantes", label: "Faltantes", icon: IconCart, listo: true, permiso: "faltantes" },
+  { id: "equipos", label: "Equipos", icon: IconSnowflake, listo: true, permiso: "equipos" },
   { id: "notas", label: "Notas", icon: IconNote, listo: true, permiso: "notas" },
   { id: "usuarios", label: "Usuarios", icon: IconUsers, listo: true, permiso: "usuarios" },
   { id: "configuracion", label: "Configuración", icon: IconGear, listo: true, permiso: "configuracion" },
@@ -1285,6 +1340,150 @@ const CATEGORIAS_NOTA = [
   { valor: "recordatorio", label: "⏰ Recordatorio", color: "bg-violet-100 dark:bg-violet-900/20 text-violet-700 dark:text-violet-400" },
 ];
 const infoCategoria = (valor) => CATEGORIAS_NOTA.find(c => c.valor === valor) || CATEGORIAS_NOTA[0];
+
+const TIPOS_EQUIPO = ["Freezer", "Refrigerador", "Exhibidor", "Otro"];
+
+function PaginaEquipos({ equipos, asignaciones, productos, cargando, error, puedeEditar = true, onCrearEquipo, onEliminarEquipo, onAsignar, onQuitar }) {
+  const [equipoSeleccionado, setEquipoSeleccionado] = useState(null);
+  const [nombreNuevo, setNombreNuevo] = useState("");
+  const [tipoNuevo, setTipoNuevo] = useState("Freezer");
+  const [mostrarForm, setMostrarForm] = useState(false);
+  const [guardando, setGuardando] = useState(false);
+  const [busqueda, setBusqueda] = useState("");
+
+  const productoPorId = (id) => productos.find(p => p.id === id);
+  const productosDeEquipo = (equipoId) => asignaciones.filter(a => a.equipo_id === equipoId).map(a => productoPorId(a.producto_id)).filter(Boolean);
+  const equipoActivo = equipos.find(e => e.id === equipoSeleccionado);
+
+  const crearEquipo = async () => {
+    if (!nombreNuevo.trim()) { mostrarError("Ponele un nombre al equipo"); return; }
+    setGuardando(true);
+    try {
+      await onCrearEquipo({ nombre: nombreNuevo.trim(), tipo: tipoNuevo });
+      setNombreNuevo(""); setTipoNuevo("Freezer"); setMostrarForm(false);
+    } catch (e) { mostrarError(e.message); }
+    finally { setGuardando(false); }
+  };
+
+  const eliminarEquipo = async (equipo) => {
+    if (!(await confirmarAccion(`¿Eliminar "${equipo.nombre}"? Los productos que tenías asignados ahí no se borran, solo dejan de estar etiquetados en este equipo.`))) return;
+    try { await onEliminarEquipo(equipo); setEquipoSeleccionado(null); } catch (e) { mostrarError(e.message); }
+  };
+
+  // --- Vista de detalle de un equipo ---
+  if (equipoActivo) {
+    const asignados = productosDeEquipo(equipoActivo.id);
+    const idsAsignados = new Set(asignados.map(p => p.id));
+    const resultadosBusqueda = busqueda.trim().length > 0
+      ? productos.filter(p => !idsAsignados.has(p.id) && p.nombre.toLowerCase().includes(busqueda.toLowerCase())).slice(0, 8)
+      : [];
+
+    return (
+      <div className="max-w-xl space-y-4">
+        <button onClick={() => { setEquipoSeleccionado(null); setBusqueda(""); }} className="text-sm text-slate-500 dark:text-white/60 flex items-center gap-1">← Volver a Equipos</button>
+        <div className="flex items-center justify-between">
+          <h1 className="text-xl font-bold text-slate-800 dark:text-white font-display">{equipoActivo.nombre}</h1>
+          {puedeEditar && <button onClick={() => eliminarEquipo(equipoActivo)} className="text-xs text-rose-500 font-semibold">Eliminar equipo</button>}
+        </div>
+        <p className="text-xs text-slate-400 dark:text-white/40">{equipoActivo.tipo}</p>
+
+        <div className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-white/10 rounded-2xl p-5">
+          <h2 className="font-semibold text-slate-800 dark:text-white text-sm mb-3">Productos aquí ({asignados.length})</h2>
+          {asignados.length === 0 ? (
+            <p className="text-sm text-slate-400 dark:text-white/40">Todavía no le asignaste productos.</p>
+          ) : (
+            <div className="space-y-2">
+              {asignados.map(p => {
+                const agotado = Number(p.cantidad) <= 0;
+                const bajo = !agotado && Number(p.cantidad) <= Number(p.minimo || 0) && Number(p.minimo) > 0;
+                return (
+                  <div key={p.id} className="flex items-center justify-between py-2 border-b border-slate-100 dark:border-white/5 last:border-0">
+                    <div>
+                      <p className="text-sm text-slate-800 dark:text-white">{p.nombre}</p>
+                      <p className={`text-xs font-semibold ${agotado ? "text-rose-500" : bajo ? "text-amber-500" : "text-slate-400 dark:text-white/40"}`}>
+                        {agotado ? "¡Agotado!" : bajo ? `Quedan ${p.cantidad} — stock bajo` : `Quedan ${p.cantidad}`}
+                      </p>
+                    </div>
+                    {puedeEditar && <button onClick={() => onQuitar(p.id, equipoActivo.id)} className="text-slate-300 hover:text-rose-500 text-sm px-2">✕</button>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {puedeEditar && (
+          <div className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-white/10 rounded-2xl p-5">
+            <h2 className="font-semibold text-slate-800 dark:text-white text-sm mb-3">Agregar producto a este equipo</h2>
+            <input value={busqueda} onChange={(e) => setBusqueda(e.target.value)} placeholder="Buscar producto por nombre..."
+              className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-black text-sm text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-[#E3A73B]" />
+            {resultadosBusqueda.length > 0 && (
+              <div className="mt-2 space-y-1">
+                {resultadosBusqueda.map(p => (
+                  <button key={p.id} onClick={async () => { try { await onAsignar(p.id, equipoActivo.id); setBusqueda(""); } catch (e) { mostrarError(e.message); } }}
+                    className="w-full text-left px-3 py-2 rounded-lg bg-slate-50 dark:bg-white/5 text-sm text-slate-700 dark:text-white hover:bg-slate-100 dark:hover:bg-white/10">
+                    + {p.nombre}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // --- Vista de lista de equipos ---
+  return (
+    <div className="max-w-xl space-y-5">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-bold text-slate-800 dark:text-white font-display">🧊 Equipos</h1>
+          <p className="text-sm text-slate-500 dark:text-white/60 mt-1">Freezers y refris, con lo que hay guardado en cada uno.</p>
+        </div>
+        {puedeEditar && <button onClick={() => setMostrarForm(v => !v)} className="px-4 py-2 rounded-lg bg-[#16233D] text-white text-sm font-semibold">{mostrarForm ? "Cancelar" : "+ Agregar equipo"}</button>}
+      </div>
+
+      {error && <div className="bg-rose-50 dark:bg-rose-900/10 border border-rose-200 dark:border-rose-900/30 text-rose-600 dark:text-rose-400 text-sm rounded-lg p-3">{error}</div>}
+
+      {mostrarForm && (
+        <div className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-white/10 rounded-2xl p-5 space-y-3">
+          <input value={nombreNuevo} onChange={(e) => setNombreNuevo(e.target.value)} placeholder="Ej. Freezer de la gaseosa"
+            onKeyDown={(e) => e.key === "Enter" && crearEquipo()}
+            className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-black text-sm text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-[#E3A73B]" />
+          <div className="flex gap-2">
+            <select value={tipoNuevo} onChange={(e) => setTipoNuevo(e.target.value)}
+              className="px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-black text-sm text-slate-800 dark:text-white outline-none">
+              {TIPOS_EQUIPO.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <button onClick={crearEquipo} disabled={guardando} className="px-4 py-2 rounded-lg bg-[#E3A73B] text-white text-sm font-semibold disabled:opacity-50">
+              {guardando ? "Guardando..." : "Crear"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {cargando ? <p className="text-sm text-slate-400">Cargando...</p> : equipos.length === 0 && !mostrarForm ? (
+        <p className="text-sm text-slate-400 dark:text-white/40">Todavía no agregaste ningún equipo.</p>
+      ) : (
+        <div className="grid sm:grid-cols-2 gap-3">
+          {equipos.map(eq => {
+            const asignados = productosDeEquipo(eq.id);
+            const agotados = asignados.filter(p => Number(p.cantidad) <= 0).length;
+            return (
+              <button key={eq.id} onClick={() => setEquipoSeleccionado(eq.id)}
+                className="text-left bg-white dark:bg-neutral-900 border border-slate-200 dark:border-white/10 rounded-2xl p-4 hover:border-[#E3A73B] transition-colors">
+                <p className="font-semibold text-slate-800 dark:text-white text-sm">{eq.nombre}</p>
+                <p className="text-xs text-slate-400 dark:text-white/40 mt-0.5">{eq.tipo} · {asignados.length} producto{asignados.length !== 1 ? "s" : ""}</p>
+                {agotados > 0 && <p className="text-xs text-rose-500 font-semibold mt-1">⚠️ {agotados} agotado{agotados !== 1 ? "s" : ""}</p>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function PaginaNotas({ notas, cargando, error, puedeUsar, onCrear, onActualizar, onEliminar }) {
   const [titulo, setTitulo] = useState("");
@@ -5490,6 +5689,42 @@ function AppInterna({ sesion, onCerrarSesion }) {
   const handleActualizarNota = async (id, cambios) => { await supaApi.actualizarNota(id, cambios); await cargarNotas(); };
   const handleEliminarNota = async (nota) => { await supaApi.eliminarNota(nota.id); await cargarNotas(); };
 
+  const [equipos, setEquipos] = useState([]);
+  const [asignacionesEquipos, setAsignacionesEquipos] = useState([]);
+  const [cargandoEquipos, setCargandoEquipos] = useState(true);
+  const [errorEquipos, setErrorEquipos] = useState(null);
+
+  const cargarEquipos = useCallback(async () => {
+    try {
+      setErrorEquipos(null);
+      const [{ datos: equiposData, offline: off1 }, { datos: asignacionesData, offline: off2 }] = await Promise.all([
+        obtenerConRespaldo("equipos", () => supaApi.listarEquipos()),
+        obtenerConRespaldo("producto_equipos", () => supaApi.listarAsignacionesEquipos()),
+      ]);
+      setEquipos(equiposData);
+      setAsignacionesEquipos(asignacionesData);
+      if (off1 || off2) notificarConexion("sin_conexion");
+    } catch (e) {
+      setErrorEquipos("No se pudo conectar con la base de datos. Revisá tu conexión a internet.");
+    } finally {
+      setCargandoEquipos(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    cargarEquipos();
+    const intervalo = setInterval(() => {
+      if (estadoConexionGlobal === "sin_conexion") return;
+      cargarEquipos();
+    }, 8000);
+    return () => clearInterval(intervalo);
+  }, [cargarEquipos]);
+
+  const handleCrearEquipo = async (datos) => { await supaApi.crearEquipo(datos); await cargarEquipos(); };
+  const handleEliminarEquipo = async (equipo) => { await supaApi.eliminarEquipo(equipo.id); await cargarEquipos(); };
+  const handleAsignarEquipo = async (productoId, equipoId) => { await supaApi.asignarProductoAEquipo(productoId, equipoId); await cargarEquipos(); };
+  const handleQuitarEquipo = async (productoId, equipoId) => { await supaApi.quitarProductoDeEquipo(productoId, equipoId); await cargarEquipos(); };
+
   const handleCrearFiado = async ({ cliente_id, productos: items, total }) => {
     const cantidadesLocales = {};
     for (const item of items) {
@@ -5717,6 +5952,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
     consumo: <PaginaConsumoHogar productos={productos} registros={consumoHogar} cargando={cargandoConsumo} error={errorConsumo} onRegistrar={handleRegistrarConsumo} onEliminar={handleEliminarConsumo} />,
     produccion: <PaginaProduccion productos={productos} lotes={lotes} cargando={cargandoLotes} error={errorLotes} onIniciar={handleIniciarLote} onAgregarIngrediente={handleAgregarIngredienteLote} onFinalizar={handleFinalizarLote} onEliminar={handleEliminarLote} />,
     notas: <PaginaNotas notas={notas} cargando={cargandoNotas} error={errorNotas} puedeUsar={puedeUsarNotas} onCrear={handleCrearNota} onActualizar={handleActualizarNota} onEliminar={handleEliminarNota} />,
+    equipos: <PaginaEquipos equipos={equipos} asignaciones={asignacionesEquipos} productos={productos} cargando={cargandoEquipos} error={errorEquipos} puedeEditar={permisos.editar} onCrearEquipo={handleCrearEquipo} onEliminarEquipo={handleEliminarEquipo} onAsignar={handleAsignarEquipo} onQuitar={handleQuitarEquipo} />,
     faltantes: <PaginaFaltantes faltantes={faltantes} proveedores={proveedores} cargando={cargandoFaltantes} error={errorFaltantes} puedeEditar={permisos.editar} onCrearFaltante={handleCrearFaltante} onMarcarFaltante={handleMarcarFaltante} onEliminarFaltante={handleEliminarFaltante} onCrearProveedor={handleCrearProveedor} onActualizarProveedor={handleActualizarProveedor} onEliminarProveedor={handleEliminarProveedor} />,
     usuarios: <PaginaUsuarios nombreNegocio={nombreNegocio} />,
     configuracion: <PaginaConfiguracion nombreNegocio={nombreNegocio} setNombreNegocio={setNombreNegocio} logo={logo} onLogoChange={handleLogoChange} onQuitarLogo={quitarLogo} logoInputRef={logoInputRef} moneda={moneda} onMonedaChange={cambiarMoneda} cambiandoMoneda={cambiandoMoneda} />,
