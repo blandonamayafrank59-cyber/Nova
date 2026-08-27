@@ -850,6 +850,39 @@ const supaApi = {
     const res = await peticionApi(`${SUPABASE_URL}/rest/v1/faltantes?id=eq.${id}&negocio_id=eq.${negocioId}`, { method: "DELETE" });
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo eliminar el faltante"); }
   },
+
+  // --- Notas ---
+  async listarNotas() {
+    const negocioId = await obtenerMiNegocioId();
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/notas?negocio_id=eq.${negocioId}&select=*&order=fijada.desc,creado_en.desc`);
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudieron cargar las notas"); }
+    return res.json();
+  },
+  async crearNota(nota) {
+    const negocioId = await obtenerMiNegocioId();
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/notas`, {
+      method: "POST",
+      extraHeaders: { Prefer: "return=representation" },
+      body: JSON.stringify({ ...nota, negocio_id: negocioId }),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo crear la nota"); }
+    return res.json();
+  },
+  async actualizarNota(id, cambios) {
+    const negocioId = await obtenerMiNegocioId();
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/notas?id=eq.${id}&negocio_id=eq.${negocioId}`, {
+      method: "PATCH",
+      extraHeaders: { Prefer: "return=representation" },
+      body: JSON.stringify(cambios),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo actualizar la nota"); }
+    return res.json();
+  },
+  async eliminarNota(id) {
+    const negocioId = await obtenerMiNegocioId();
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/notas?id=eq.${id}&negocio_id=eq.${negocioId}`, { method: "DELETE" });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo eliminar la nota"); }
+  },
   async crearFiado(fiado) {
     const negocioId = await obtenerMiNegocioId();
     const res = await peticionApi(`${SUPABASE_URL}/rest/v1/fiados`, {
@@ -966,6 +999,18 @@ const supaApi = {
     if (!res.ok) return null;
     const datos = await res.json();
     return datos[0] || null;
+  },
+  // Las notas son privadas del dueño que creó el negocio (a propósito, no
+  // se comparten con el resto del equipo). Esto permite que la pantalla de
+  // Notas sepa si el usuario actual puede usarlas, en vez de mostrarle
+  // errores confusos si algún día se agrega un segundo administrador que
+  // no sea el creador original.
+  async soyCreadorDelNegocio() {
+    const negocioId = await obtenerMiNegocioId();
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/negocios?id=eq.${negocioId}&select=creado_por&limit=1`);
+    if (!res.ok) return false;
+    const datos = await res.json();
+    return datos[0]?.creado_por === currentUserId;
   },
 
   // --- Configuración del negocio (nombre y logo, compartidos entre todos los dispositivos/usuarios del negocio) ---
@@ -1090,10 +1135,10 @@ const IconFactory   = (p) => <Ic {...p}>🏭</Ic>;
 const ROL_LABEL = { administrador: "Administrador", dueno: "Dueño / Propietario", empleado: "Empleado", consulta: "Usuario de consulta" };
 
 const PERMISOS_POR_ROL = {
-  administrador: { dashboard: true, inventario: true, caja: true, perdidas: true, historial: true, estadisticas: true, cuentas: true, consumo: true, produccion: true, faltantes: true, usuarios: true, configuracion: true, ver_costos: true, ver_ganancias: true, editar: true },
-  dueno:         { dashboard: true, inventario: true, caja: false, perdidas: true, historial: false, estadisticas: true, cuentas: true, consumo: false, produccion: false, faltantes: true, usuarios: false, configuracion: false, ver_costos: true, ver_ganancias: true, editar: false },
-  empleado:      { dashboard: false, inventario: true, caja: true, perdidas: false, historial: false, estadisticas: false, cuentas: true, consumo: false, produccion: true, faltantes: true, usuarios: false, configuracion: false, ver_costos: false, ver_ganancias: false, editar: true },
-  consulta:      { dashboard: true, inventario: true, caja: false, perdidas: true, historial: false, estadisticas: true, cuentas: true, consumo: false, produccion: false, faltantes: true, usuarios: false, configuracion: false, ver_costos: false, ver_ganancias: true, editar: false },
+  administrador: { dashboard: true, inventario: true, caja: true, perdidas: true, historial: true, estadisticas: true, cuentas: true, consumo: true, produccion: true, faltantes: true, notas: true, usuarios: true, configuracion: true, ver_costos: true, ver_ganancias: true, editar: true },
+  dueno:         { dashboard: true, inventario: true, caja: false, perdidas: true, historial: false, estadisticas: true, cuentas: true, consumo: false, produccion: false, faltantes: true, notas: true, usuarios: false, configuracion: false, ver_costos: true, ver_ganancias: true, editar: false },
+  empleado:      { dashboard: false, inventario: true, caja: true, perdidas: false, historial: false, estadisticas: false, cuentas: true, consumo: false, produccion: true, faltantes: true, notas: false, usuarios: false, configuracion: false, ver_costos: false, ver_ganancias: false, editar: true },
+  consulta:      { dashboard: true, inventario: true, caja: false, perdidas: true, historial: false, estadisticas: true, cuentas: true, consumo: false, produccion: false, faltantes: true, notas: false, usuarios: false, configuracion: false, ver_costos: false, ver_ganancias: true, editar: false },
 };
 
 const NAV_ITEMS = [
@@ -1106,7 +1151,8 @@ const NAV_ITEMS = [
   { id: "cuentas", label: "Cuentas por cobrar", icon: IconCard, listo: true, permiso: "cuentas" },
   { id: "consumo", label: "Consumo del hogar", icon: IconHome, listo: true, permiso: "consumo" },
   { id: "produccion", label: "Producción por lotes", icon: IconFactory, listo: true, permiso: "produccion" },
-  { id: "faltantes", label: "Faltantes", icon: IconNote, listo: true, permiso: "faltantes" },
+  { id: "faltantes", label: "Faltantes", icon: IconCart, listo: true, permiso: "faltantes" },
+  { id: "notas", label: "Notas", icon: IconNote, listo: true, permiso: "notas" },
   { id: "usuarios", label: "Usuarios", icon: IconUsers, listo: true, permiso: "usuarios" },
   { id: "configuracion", label: "Configuración", icon: IconGear, listo: true, permiso: "configuracion" },
 ];
@@ -1232,6 +1278,127 @@ const DIAS_SEMANA = [
   { valor: 0, corto: "Dom" }, { valor: 1, corto: "Lun" }, { valor: 2, corto: "Mar" },
   { valor: 3, corto: "Mié" }, { valor: 4, corto: "Jue" }, { valor: 5, corto: "Vie" }, { valor: 6, corto: "Sáb" },
 ];
+
+const CATEGORIAS_NOTA = [
+  { valor: "idea", label: "💡 Idea", color: "bg-sky-100 dark:bg-sky-900/20 text-sky-700 dark:text-sky-400" },
+  { valor: "pendiente", label: "📌 Pendiente", color: "bg-amber-100 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400" },
+  { valor: "recordatorio", label: "⏰ Recordatorio", color: "bg-violet-100 dark:bg-violet-900/20 text-violet-700 dark:text-violet-400" },
+];
+const infoCategoria = (valor) => CATEGORIAS_NOTA.find(c => c.valor === valor) || CATEGORIAS_NOTA[0];
+
+function PaginaNotas({ notas, cargando, error, puedeUsar, onCrear, onActualizar, onEliminar }) {
+  const [titulo, setTitulo] = useState("");
+  const [contenido, setContenido] = useState("");
+  const [categoria, setCategoria] = useState("idea");
+  const [fechaRecordatorio, setFechaRecordatorio] = useState("");
+  const [guardando, setGuardando] = useState(false);
+  const [mostrarForm, setMostrarForm] = useState(false);
+
+  if (puedeUsar === false) {
+    return (
+      <div className="max-w-lg">
+        <h1 className="text-xl font-bold text-slate-800 dark:text-white font-display mb-2">📓 Notas</h1>
+        <div className="bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-2xl p-5 text-sm text-slate-500 dark:text-white/60">
+          Las notas son privadas de quien creó el negocio, así que no están disponibles para tu cuenta.
+        </div>
+      </div>
+    );
+  }
+
+  const agregar = async () => {
+    if (!titulo.trim()) { mostrarError("Ponele un título a la nota"); return; }
+    setGuardando(true);
+    try {
+      await onCrear({ titulo: titulo.trim(), contenido: contenido.trim() || null, categoria, fecha_recordatorio: fechaRecordatorio || null });
+      setTitulo(""); setContenido(""); setCategoria("idea"); setFechaRecordatorio(""); setMostrarForm(false);
+    } catch (e) { mostrarError(e.message); }
+    finally { setGuardando(false); }
+  };
+
+  const hoy = new Date().toISOString().slice(0, 10);
+  const activas = notas.filter(n => !n.completada);
+  const completadas = notas.filter(n => n.completada).slice(0, 10);
+
+  return (
+    <div className="space-y-5 max-w-2xl">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-bold text-slate-800 dark:text-white font-display">📓 Notas</h1>
+          <p className="text-sm text-slate-500 dark:text-white/60 mt-1">Ideas, pendientes y recordatorios del negocio.</p>
+        </div>
+        <button onClick={() => setMostrarForm(v => !v)} className="px-4 py-2 rounded-lg bg-[#16233D] text-white text-sm font-semibold">
+          {mostrarForm ? "Cancelar" : "+ Nueva nota"}
+        </button>
+      </div>
+
+      {error && <div className="bg-rose-50 dark:bg-rose-900/10 border border-rose-200 dark:border-rose-900/30 text-rose-600 dark:text-rose-400 text-sm rounded-lg p-3">{error}</div>}
+
+      {mostrarForm && (
+        <div className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-white/10 rounded-2xl p-5 space-y-3">
+          <input value={titulo} onChange={(e) => setTitulo(e.target.value)} placeholder="Título"
+            className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-black text-sm text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-[#E3A73B]" />
+          <textarea value={contenido} onChange={(e) => setContenido(e.target.value)} placeholder="Detalle (opcional)" rows={3}
+            className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-black text-sm text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-[#E3A73B]" />
+          <div className="flex flex-col sm:flex-row gap-2">
+            <select value={categoria} onChange={(e) => setCategoria(e.target.value)}
+              className="px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-black text-sm text-slate-800 dark:text-white outline-none">
+              {CATEGORIAS_NOTA.map(c => <option key={c.valor} value={c.valor}>{c.label}</option>)}
+            </select>
+            <input type="date" value={fechaRecordatorio} onChange={(e) => setFechaRecordatorio(e.target.value)}
+              className="px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-black text-sm text-slate-800 dark:text-white outline-none" />
+            <button onClick={agregar} disabled={guardando} className="px-4 py-2 rounded-lg bg-[#E3A73B] text-white text-sm font-semibold disabled:opacity-50 sm:ml-auto">
+              {guardando ? "Guardando..." : "Guardar nota"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {cargando ? <p className="text-sm text-slate-400">Cargando...</p> : activas.length === 0 && !mostrarForm ? (
+        <p className="text-sm text-slate-400 dark:text-white/40">No tenés notas todavía.</p>
+      ) : (
+        <div className="space-y-3">
+          {activas.map(n => {
+            const cat = infoCategoria(n.categoria);
+            const recordatorioVencido = n.fecha_recordatorio && n.fecha_recordatorio <= hoy;
+            return (
+              <div key={n.id} className={`bg-white dark:bg-neutral-900 border rounded-2xl p-4 ${n.fijada ? "border-[#E3A73B]" : "border-slate-200 dark:border-white/10"}`}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                      <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${cat.color}`}>{cat.label}</span>
+                      {n.fecha_recordatorio && <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${recordatorioVencido ? "bg-rose-100 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400" : "bg-slate-100 dark:bg-white/10 text-slate-500 dark:text-white/50"}`}>📅 {n.fecha_recordatorio}</span>}
+                    </div>
+                    <p className="font-semibold text-slate-800 dark:text-white text-sm">{n.titulo}</p>
+                    {n.contenido && <p className="text-sm text-slate-500 dark:text-white/60 mt-1 whitespace-pre-wrap">{n.contenido}</p>}
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button onClick={() => onActualizar(n.id, { fijada: !n.fijada })} title="Fijar" className={`text-sm px-1.5 ${n.fijada ? "text-[#E3A73B]" : "text-slate-300 hover:text-[#E3A73B]"}`}>📌</button>
+                    <button onClick={() => onActualizar(n.id, { completada: true })} title="Marcar como resuelta" className="text-sm px-1.5 text-slate-300 hover:text-emerald-500">✓</button>
+                    <button onClick={() => onEliminar(n)} title="Eliminar" className="text-sm px-1.5 text-slate-300 hover:text-rose-500">✕</button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {completadas.length > 0 && (
+        <div className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-white/10 rounded-2xl p-5">
+          <h2 className="font-semibold text-slate-500 dark:text-white/50 text-sm mb-3">Resueltas recientemente</h2>
+          <div className="space-y-1">
+            {completadas.map(n => (
+              <div key={n.id} className="flex items-center justify-between text-sm text-slate-400 dark:text-white/40">
+                <span className="line-through">{n.titulo}</span>
+                <button onClick={() => onEliminar(n)} className="hover:text-rose-500 px-2">✕</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function PaginaFaltantes({ faltantes, proveedores, cargando, error, puedeEditar = true, onCrearFaltante, onMarcarFaltante, onEliminarFaltante, onCrearProveedor, onActualizarProveedor, onEliminarProveedor }) {
   const [nombreNuevo, setNombreNuevo] = useState("");
@@ -5289,6 +5456,40 @@ function AppInterna({ sesion, onCerrarSesion }) {
   const handleActualizarProveedor = async (id, cambios) => { await supaApi.actualizarProveedor(id, cambios); await cargarFaltantes(); };
   const handleEliminarProveedor = async (proveedor) => { await supaApi.eliminarProveedor(proveedor.id); await cargarFaltantes(); };
 
+  const [notas, setNotas] = useState([]);
+  const [cargandoNotas, setCargandoNotas] = useState(true);
+  const [errorNotas, setErrorNotas] = useState(null);
+  const [puedeUsarNotas, setPuedeUsarNotas] = useState(undefined); // undefined = sin revisar todavía
+
+  const cargarNotas = useCallback(async () => {
+    try {
+      setErrorNotas(null);
+      const esCreador = await supaApi.soyCreadorDelNegocio();
+      setPuedeUsarNotas(esCreador);
+      if (!esCreador) { setCargandoNotas(false); return; }
+      const { datos, offline } = await obtenerConRespaldo("notas", () => supaApi.listarNotas());
+      setNotas(datos);
+      if (offline) notificarConexion("sin_conexion");
+    } catch (e) {
+      setErrorNotas("No se pudo conectar con la base de datos. Revisá tu conexión a internet.");
+    } finally {
+      setCargandoNotas(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    cargarNotas();
+    const intervalo = setInterval(() => {
+      if (estadoConexionGlobal === "sin_conexion") return;
+      cargarNotas();
+    }, 8000);
+    return () => clearInterval(intervalo);
+  }, [cargarNotas]);
+
+  const handleCrearNota = async (datos) => { await supaApi.crearNota(datos); await cargarNotas(); };
+  const handleActualizarNota = async (id, cambios) => { await supaApi.actualizarNota(id, cambios); await cargarNotas(); };
+  const handleEliminarNota = async (nota) => { await supaApi.eliminarNota(nota.id); await cargarNotas(); };
+
   const handleCrearFiado = async ({ cliente_id, productos: items, total }) => {
     const cantidadesLocales = {};
     for (const item of items) {
@@ -5515,7 +5716,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
     cuentas: <PaginaCuentasPorCobrar clientes={clientes} pagosFiado={pagosFiado} productos={productos} cargando={cargandoCuentas} error={errorCuentas} onRecargar={cargarCuentasPorCobrar} onCrearCliente={handleCrearCliente} onActualizarCliente={handleActualizarCliente} onEliminarCliente={handleEliminarCliente} onCrearFiado={handleCrearFiado} onRegistrarPago={handleRegistrarPago} onEditarFiado={handleEditarFiado} onEliminarFiado={handleEliminarFiado} />,
     consumo: <PaginaConsumoHogar productos={productos} registros={consumoHogar} cargando={cargandoConsumo} error={errorConsumo} onRegistrar={handleRegistrarConsumo} onEliminar={handleEliminarConsumo} />,
     produccion: <PaginaProduccion productos={productos} lotes={lotes} cargando={cargandoLotes} error={errorLotes} onIniciar={handleIniciarLote} onAgregarIngrediente={handleAgregarIngredienteLote} onFinalizar={handleFinalizarLote} onEliminar={handleEliminarLote} />,
-    notas: <ProximamenteCard titulo="Notas y recordatorios" descripcion="Un espacio para pedidos pendientes, ideas y tareas del negocio." icon={IconNote} />,
+    notas: <PaginaNotas notas={notas} cargando={cargandoNotas} error={errorNotas} puedeUsar={puedeUsarNotas} onCrear={handleCrearNota} onActualizar={handleActualizarNota} onEliminar={handleEliminarNota} />,
     faltantes: <PaginaFaltantes faltantes={faltantes} proveedores={proveedores} cargando={cargandoFaltantes} error={errorFaltantes} puedeEditar={permisos.editar} onCrearFaltante={handleCrearFaltante} onMarcarFaltante={handleMarcarFaltante} onEliminarFaltante={handleEliminarFaltante} onCrearProveedor={handleCrearProveedor} onActualizarProveedor={handleActualizarProveedor} onEliminarProveedor={handleEliminarProveedor} />,
     usuarios: <PaginaUsuarios nombreNegocio={nombreNegocio} />,
     configuracion: <PaginaConfiguracion nombreNegocio={nombreNegocio} setNombreNegocio={setNombreNegocio} logo={logo} onLogoChange={handleLogoChange} onQuitarLogo={quitarLogo} logoInputRef={logoInputRef} moneda={moneda} onMonedaChange={cambiarMoneda} cambiandoMoneda={cambiandoMoneda} />,
