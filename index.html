@@ -918,18 +918,27 @@ const supaApi = {
   },
   async listarAsignacionesEquipos() {
     const negocioId = await obtenerMiNegocioId();
-    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/producto_equipos?negocio_id=eq.${negocioId}&select=producto_id,equipo_id`);
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/producto_equipos?negocio_id=eq.${negocioId}&select=producto_id,equipo_id,cantidad`);
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudieron cargar las asignaciones"); }
     return res.json();
   },
-  async asignarProductoAEquipo(productoId, equipoId) {
+  async asignarProductoAEquipo(productoId, equipoId, cantidad = 1) {
     const negocioId = await obtenerMiNegocioId();
     const res = await peticionApi(`${SUPABASE_URL}/rest/v1/producto_equipos`, {
       method: "POST",
       extraHeaders: { Prefer: "return=minimal,resolution=ignore-duplicates" },
-      body: JSON.stringify({ producto_id: productoId, equipo_id: equipoId, negocio_id: negocioId }),
+      body: JSON.stringify({ producto_id: productoId, equipo_id: equipoId, negocio_id: negocioId, cantidad: Math.max(0, Number(cantidad) || 0) }),
     });
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo asignar el producto"); }
+  },
+  async actualizarCantidadEnEquipo(productoId, equipoId, cantidad) {
+    const negocioId = await obtenerMiNegocioId();
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/producto_equipos?producto_id=eq.${productoId}&equipo_id=eq.${equipoId}&negocio_id=eq.${negocioId}`, {
+      method: "PATCH",
+      extraHeaders: { Prefer: "return=minimal" },
+      body: JSON.stringify({ cantidad: Math.max(0, Number(cantidad) || 0) }),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo actualizar la cantidad"); }
   },
   async quitarProductoDeEquipo(productoId, equipoId) {
     const negocioId = await obtenerMiNegocioId();
@@ -1331,16 +1340,20 @@ const infoCategoria = (valor) => CATEGORIAS_NOTA.find(c => c.valor === valor) ||
 
 const TIPOS_EQUIPO = ["Freezer", "Refrigerador", "Exhibidor", "Otro"];
 
-function PaginaEquipos({ equipos, asignaciones, productos, cargando, error, puedeEditar = true, onCrearEquipo, onEliminarEquipo, onAsignar, onQuitar }) {
+function PaginaEquipos({ equipos, asignaciones, productos, cargando, error, puedeEditar = true, onCrearEquipo, onEliminarEquipo, onAsignar, onQuitar, onActualizarCantidad }) {
   const [equipoSeleccionado, setEquipoSeleccionado] = useState(null);
   const [nombreNuevo, setNombreNuevo] = useState("");
   const [tipoNuevo, setTipoNuevo] = useState("Freezer");
   const [mostrarForm, setMostrarForm] = useState(false);
   const [guardando, setGuardando] = useState(false);
   const [busqueda, setBusqueda] = useState("");
+  const [cantidadesNuevas, setCantidadesNuevas] = useState({});
 
   const productoPorId = (id) => productos.find(p => p.id === id);
-  const productosDeEquipo = (equipoId) => asignaciones.filter(a => a.equipo_id === equipoId).map(a => productoPorId(a.producto_id)).filter(Boolean);
+  const productosDeEquipo = (equipoId) => asignaciones
+    .filter(a => a.equipo_id === equipoId)
+    .map(a => { const prod = productoPorId(a.producto_id); return prod ? { ...prod, cantidad_equipo: Number(a.cantidad) || 0 } : null; })
+    .filter(Boolean);
   const equipoActivo = equipos.find(e => e.id === equipoSeleccionado);
 
   const crearEquipo = async () => {
@@ -1356,6 +1369,20 @@ function PaginaEquipos({ equipos, asignaciones, productos, cargando, error, pued
   const eliminarEquipo = async (equipo) => {
     if (!(await confirmarAccion(`¿Eliminar "${equipo.nombre}"? Los productos que tenías asignados ahí no se borran, solo dejan de estar etiquetados en este equipo.`))) return;
     try { await onEliminarEquipo(equipo); setEquipoSeleccionado(null); } catch (e) { mostrarError(e.message); }
+  };
+
+  const cambiarCantidad = async (productoId, equipoId, nuevaCantidad) => {
+    if (nuevaCantidad < 0) return;
+    try { await onActualizarCantidad(productoId, equipoId, nuevaCantidad); } catch (e) { mostrarError(e.message); }
+  };
+
+  const asignarConCantidad = async (productoId, equipoId) => {
+    const cantidad = Math.max(1, parseInt(cantidadesNuevas[productoId], 10) || 1);
+    try {
+      await onAsignar(productoId, equipoId, cantidad);
+      setBusqueda("");
+      setCantidadesNuevas((c) => { const copia = { ...c }; delete copia[productoId]; return copia; });
+    } catch (e) { mostrarError(e.message); }
   };
 
   // --- Vista de detalle de un equipo ---
@@ -1382,17 +1409,24 @@ function PaginaEquipos({ equipos, asignaciones, productos, cargando, error, pued
           ) : (
             <div className="space-y-2">
               {asignados.map(p => {
-                const agotado = Number(p.cantidad) <= 0;
-                const bajo = !agotado && Number(p.cantidad) <= Number(p.minimo || 0) && Number(p.minimo) > 0;
+                const cantidadEquipo = p.cantidad_equipo;
+                const agotado = cantidadEquipo <= 0;
                 return (
-                  <div key={p.id} className="flex items-center justify-between py-2 border-b border-slate-100 dark:border-white/5 last:border-0">
-                    <div>
-                      <p className="text-sm text-slate-800 dark:text-white">{p.nombre}</p>
-                      <p className={`text-xs font-semibold ${agotado ? "text-rose-500" : bajo ? "text-amber-500" : "text-slate-400 dark:text-white/40"}`}>
-                        {agotado ? "¡Agotado!" : bajo ? `Quedan ${p.cantidad} — stock bajo` : `Quedan ${p.cantidad}`}
+                  <div key={p.id} className="flex items-center justify-between py-2 border-b border-slate-100 dark:border-white/5 last:border-0 gap-2">
+                    <div className="min-w-0">
+                      <p className="text-sm text-slate-800 dark:text-white truncate">{p.nombre}</p>
+                      <p className={"text-xs font-semibold " + (agotado ? "text-rose-500" : "text-slate-400 dark:text-white/40")}>
+                        {agotado ? "¡Agotado en este equipo!" : `${cantidadEquipo} en este equipo`} · {p.cantidad} en inventario total
                       </p>
                     </div>
-                    {puedeEditar && <button onClick={() => onQuitar(p.id, equipoActivo.id)} className="text-slate-300 hover:text-rose-500 text-sm px-2">✕</button>}
+                    {puedeEditar && (
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button onClick={() => cambiarCantidad(p.id, equipoActivo.id, cantidadEquipo - 1)} className="w-7 h-7 rounded-lg border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white flex items-center justify-center">−</button>
+                        <span className="w-7 text-center text-sm font-semibold text-slate-800 dark:text-white">{cantidadEquipo}</span>
+                        <button onClick={() => cambiarCantidad(p.id, equipoActivo.id, cantidadEquipo + 1)} className="w-7 h-7 rounded-lg border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white flex items-center justify-center">+</button>
+                        <button onClick={() => onQuitar(p.id, equipoActivo.id)} className="text-slate-300 hover:text-rose-500 text-sm px-1.5">✕</button>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -1406,12 +1440,23 @@ function PaginaEquipos({ equipos, asignaciones, productos, cargando, error, pued
             <input value={busqueda} onChange={(e) => setBusqueda(e.target.value)} placeholder="Buscar producto por nombre..."
               className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-black text-sm text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-[#E3A73B]" />
             {resultadosBusqueda.length > 0 && (
-              <div className="mt-2 space-y-1">
+              <div className="mt-2 space-y-1.5">
                 {resultadosBusqueda.map(p => (
-                  <button key={p.id} onClick={async () => { try { await onAsignar(p.id, equipoActivo.id); setBusqueda(""); } catch (e) { mostrarError(e.message); } }}
-                    className="w-full text-left px-3 py-2 rounded-lg bg-slate-50 dark:bg-white/5 text-sm text-slate-700 dark:text-white hover:bg-slate-100 dark:hover:bg-white/10">
-                    + {p.nombre}
-                  </button>
+                  <div key={p.id} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-50 dark:bg-white/5">
+                    <span className="flex-1 min-w-0 truncate text-sm text-slate-700 dark:text-white">{p.nombre}</span>
+                    <span className="text-[11px] text-slate-400 dark:text-white/40 shrink-0">{p.cantidad} en inventario</span>
+                    <input
+                      type="number"
+                      min="1"
+                      value={cantidadesNuevas[p.id] ?? 1}
+                      onChange={(e) => setCantidadesNuevas((c) => ({ ...c, [p.id]: e.target.value }))}
+                      className="w-14 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-center text-slate-800 dark:text-white outline-none focus:border-[#E3A73B] shrink-0"
+                    />
+                    <button onClick={() => asignarConCantidad(p.id, equipoActivo.id)}
+                      className="shrink-0 text-xs font-semibold px-3 py-2 rounded-lg bg-[#16233D] text-white hover:brightness-110">
+                      + Agregar
+                    </button>
+                  </div>
                 ))}
               </div>
             )}
@@ -1457,7 +1502,7 @@ function PaginaEquipos({ equipos, asignaciones, productos, cargando, error, pued
         <div className="grid sm:grid-cols-2 gap-3">
           {equipos.map(eq => {
             const asignados = productosDeEquipo(eq.id);
-            const agotados = asignados.filter(p => Number(p.cantidad) <= 0).length;
+            const agotados = asignados.filter(p => Number(p.cantidad_equipo) <= 0).length;
             return (
               <button key={eq.id} onClick={() => setEquipoSeleccionado(eq.id)}
                 className="text-left bg-white dark:bg-neutral-900 border border-slate-200 dark:border-white/10 rounded-2xl p-4 hover:border-[#E3A73B] transition-colors">
@@ -5695,8 +5740,9 @@ function AppInterna({ sesion, onCerrarSesion }) {
 
   const handleCrearEquipo = async (datos) => { await supaApi.crearEquipo(datos); await cargarEquipos(); };
   const handleEliminarEquipo = async (equipo) => { await supaApi.eliminarEquipo(equipo.id); await cargarEquipos(); };
-  const handleAsignarEquipo = async (productoId, equipoId) => { await supaApi.asignarProductoAEquipo(productoId, equipoId); await cargarEquipos(); };
+  const handleAsignarEquipo = async (productoId, equipoId, cantidad) => { await supaApi.asignarProductoAEquipo(productoId, equipoId, cantidad); await cargarEquipos(); };
   const handleQuitarEquipo = async (productoId, equipoId) => { await supaApi.quitarProductoDeEquipo(productoId, equipoId); await cargarEquipos(); };
+  const handleActualizarCantidadEquipo = async (productoId, equipoId, cantidad) => { await supaApi.actualizarCantidadEnEquipo(productoId, equipoId, cantidad); await cargarEquipos(); };
 
   const handleCrearFiado = async ({ cliente_id, productos: items, total }) => {
     const cantidadesLocales = {};
@@ -5925,7 +5971,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
     consumo: <PaginaConsumoHogar productos={productos} registros={consumoHogar} cargando={cargandoConsumo} error={errorConsumo} onRegistrar={handleRegistrarConsumo} onEliminar={handleEliminarConsumo} />,
     produccion: <PaginaProduccion productos={productos} lotes={lotes} cargando={cargandoLotes} error={errorLotes} onIniciar={handleIniciarLote} onAgregarIngrediente={handleAgregarIngredienteLote} onFinalizar={handleFinalizarLote} onEliminar={handleEliminarLote} />,
     notas: <PaginaNotas notas={notas} cargando={cargandoNotas} error={errorNotas} onCrear={handleCrearNota} onActualizar={handleActualizarNota} onEliminar={handleEliminarNota} />,
-    equipos: <PaginaEquipos equipos={equipos} asignaciones={asignacionesEquipos} productos={productos} cargando={cargandoEquipos} error={errorEquipos} puedeEditar={permisos.editar} onCrearEquipo={handleCrearEquipo} onEliminarEquipo={handleEliminarEquipo} onAsignar={handleAsignarEquipo} onQuitar={handleQuitarEquipo} />,
+    equipos: <PaginaEquipos equipos={equipos} asignaciones={asignacionesEquipos} productos={productos} cargando={cargandoEquipos} error={errorEquipos} puedeEditar={permisos.editar} onCrearEquipo={handleCrearEquipo} onEliminarEquipo={handleEliminarEquipo} onAsignar={handleAsignarEquipo} onQuitar={handleQuitarEquipo} onActualizarCantidad={handleActualizarCantidadEquipo} />,
     faltantes: <PaginaFaltantes faltantes={faltantes} proveedores={proveedores} cargando={cargandoFaltantes} error={errorFaltantes} puedeEditar={permisos.editar} onCrearFaltante={handleCrearFaltante} onMarcarFaltante={handleMarcarFaltante} onEliminarFaltante={handleEliminarFaltante} onCrearProveedor={handleCrearProveedor} onActualizarProveedor={handleActualizarProveedor} onEliminarProveedor={handleEliminarProveedor} />,
     usuarios: <PaginaUsuarios nombreNegocio={nombreNegocio} />,
     configuracion: <PaginaConfiguracion nombreNegocio={nombreNegocio} setNombreNegocio={setNombreNegocio} logo={logo} onLogoChange={handleLogoChange} onQuitarLogo={quitarLogo} logoInputRef={logoInputRef} moneda={moneda} onMonedaChange={cambiarMoneda} cambiandoMoneda={cambiandoMoneda} />,
