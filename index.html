@@ -1053,18 +1053,6 @@ const supaApi = {
     const datos = await res.json();
     return datos[0] || null;
   },
-  // Las notas son privadas del dueño que creó el negocio (a propósito, no
-  // se comparten con el resto del equipo). Esto permite que la pantalla de
-  // Notas sepa si el usuario actual puede usarlas, en vez de mostrarle
-  // errores confusos si algún día se agrega un segundo administrador que
-  // no sea el creador original.
-  async soyCreadorDelNegocio() {
-    const negocioId = await obtenerMiNegocioId();
-    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/negocios?id=eq.${negocioId}&select=creado_por&limit=1`);
-    if (!res.ok) return false;
-    const datos = await res.json();
-    return datos[0]?.creado_por === currentUserId;
-  },
 
   // --- Configuración del negocio (nombre y logo, compartidos entre todos los dispositivos/usuarios del negocio) ---
   async obtenerConfigNegocio() {
@@ -1192,7 +1180,7 @@ const PERMISOS_POR_ROL = {
   administrador: { dashboard: true, inventario: true, caja: true, perdidas: true, historial: true, estadisticas: true, cuentas: true, consumo: true, produccion: true, faltantes: true, notas: true, equipos: true, usuarios: true, configuracion: true, ver_costos: true, ver_ganancias: true, editar: true },
   dueno:         { dashboard: true, inventario: true, caja: false, perdidas: true, historial: false, estadisticas: true, cuentas: true, consumo: false, produccion: false, faltantes: true, notas: true, equipos: true, usuarios: false, configuracion: false, ver_costos: true, ver_ganancias: true, editar: false },
   empleado:      { dashboard: false, inventario: true, caja: true, perdidas: false, historial: false, estadisticas: false, cuentas: true, consumo: false, produccion: true, faltantes: true, notas: false, equipos: true, usuarios: false, configuracion: false, ver_costos: false, ver_ganancias: false, editar: true },
-  consulta:      { dashboard: true, inventario: true, caja: false, perdidas: true, historial: false, estadisticas: true, cuentas: true, consumo: false, produccion: false, faltantes: true, notas: false, equipos: true, usuarios: false, configuracion: false, ver_costos: false, ver_ganancias: true, editar: false },
+  consulta:      { dashboard: true, inventario: true, caja: false, perdidas: true, historial: false, estadisticas: true, cuentas: true, consumo: false, produccion: false, faltantes: true, notas: true, equipos: true, usuarios: false, configuracion: false, ver_costos: false, ver_ganancias: true, editar: false },
 };
 
 const NAV_ITEMS = [
@@ -1485,24 +1473,13 @@ function PaginaEquipos({ equipos, asignaciones, productos, cargando, error, pued
   );
 }
 
-function PaginaNotas({ notas, cargando, error, puedeUsar, onCrear, onActualizar, onEliminar }) {
+function PaginaNotas({ notas, cargando, error, onCrear, onActualizar, onEliminar }) {
   const [titulo, setTitulo] = useState("");
   const [contenido, setContenido] = useState("");
   const [categoria, setCategoria] = useState("idea");
   const [fechaRecordatorio, setFechaRecordatorio] = useState("");
   const [guardando, setGuardando] = useState(false);
   const [mostrarForm, setMostrarForm] = useState(false);
-
-  if (puedeUsar === false) {
-    return (
-      <div className="max-w-lg">
-        <h1 className="text-xl font-bold text-slate-800 dark:text-white font-display mb-2">📓 Notas</h1>
-        <div className="bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-2xl p-5 text-sm text-slate-500 dark:text-white/60">
-          Las notas son privadas de quien creó el negocio, así que no están disponibles para tu cuenta.
-        </div>
-      </div>
-    );
-  }
 
   const agregar = async () => {
     if (!titulo.trim()) { mostrarError("Ponele un título a la nota"); return; }
@@ -5658,14 +5635,10 @@ function AppInterna({ sesion, onCerrarSesion }) {
   const [notas, setNotas] = useState([]);
   const [cargandoNotas, setCargandoNotas] = useState(true);
   const [errorNotas, setErrorNotas] = useState(null);
-  const [puedeUsarNotas, setPuedeUsarNotas] = useState(undefined); // undefined = sin revisar todavía
 
   const cargarNotas = useCallback(async () => {
     try {
       setErrorNotas(null);
-      const esCreador = await supaApi.soyCreadorDelNegocio();
-      setPuedeUsarNotas(esCreador);
-      if (!esCreador) { setCargandoNotas(false); return; }
       const { datos, offline } = await obtenerConRespaldo("notas", () => supaApi.listarNotas());
       setNotas(datos);
       if (offline) notificarConexion("sin_conexion");
@@ -5951,7 +5924,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
     cuentas: <PaginaCuentasPorCobrar clientes={clientes} pagosFiado={pagosFiado} productos={productos} cargando={cargandoCuentas} error={errorCuentas} onRecargar={cargarCuentasPorCobrar} onCrearCliente={handleCrearCliente} onActualizarCliente={handleActualizarCliente} onEliminarCliente={handleEliminarCliente} onCrearFiado={handleCrearFiado} onRegistrarPago={handleRegistrarPago} onEditarFiado={handleEditarFiado} onEliminarFiado={handleEliminarFiado} />,
     consumo: <PaginaConsumoHogar productos={productos} registros={consumoHogar} cargando={cargandoConsumo} error={errorConsumo} onRegistrar={handleRegistrarConsumo} onEliminar={handleEliminarConsumo} />,
     produccion: <PaginaProduccion productos={productos} lotes={lotes} cargando={cargandoLotes} error={errorLotes} onIniciar={handleIniciarLote} onAgregarIngrediente={handleAgregarIngredienteLote} onFinalizar={handleFinalizarLote} onEliminar={handleEliminarLote} />,
-    notas: <PaginaNotas notas={notas} cargando={cargandoNotas} error={errorNotas} puedeUsar={puedeUsarNotas} onCrear={handleCrearNota} onActualizar={handleActualizarNota} onEliminar={handleEliminarNota} />,
+    notas: <PaginaNotas notas={notas} cargando={cargandoNotas} error={errorNotas} onCrear={handleCrearNota} onActualizar={handleActualizarNota} onEliminar={handleEliminarNota} />,
     equipos: <PaginaEquipos equipos={equipos} asignaciones={asignacionesEquipos} productos={productos} cargando={cargandoEquipos} error={errorEquipos} puedeEditar={permisos.editar} onCrearEquipo={handleCrearEquipo} onEliminarEquipo={handleEliminarEquipo} onAsignar={handleAsignarEquipo} onQuitar={handleQuitarEquipo} />,
     faltantes: <PaginaFaltantes faltantes={faltantes} proveedores={proveedores} cargando={cargandoFaltantes} error={errorFaltantes} puedeEditar={permisos.editar} onCrearFaltante={handleCrearFaltante} onMarcarFaltante={handleMarcarFaltante} onEliminarFaltante={handleEliminarFaltante} onCrearProveedor={handleCrearProveedor} onActualizarProveedor={handleActualizarProveedor} onEliminarProveedor={handleEliminarProveedor} />,
     usuarios: <PaginaUsuarios nombreNegocio={nombreNegocio} />,
