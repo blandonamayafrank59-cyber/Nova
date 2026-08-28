@@ -3183,18 +3183,24 @@ function PaginaDashboard({ productos, stockBajo, valorStock, gananciaAcumulada, 
 }
 
 const MARCA_GUARDADO = "[Guardado] ";
+const MARCA_VENTA = "[Venta] ";
+function descripcionMovimiento(m) {
+  const base = m.descripcion || (m.tipo === "ingreso" ? "Entrada de dinero" : "Salida de dinero");
+  return base.replace(MARCA_GUARDADO, "💰 ").replace(MARCA_VENTA, "🛒 ");
+}
 
 function ModalEditarMovimiento({ movimiento, onGuardar, onCerrar, guardando }) {
   const [descripcion, setDescripcion] = useState("");
   const [monto, setMonto] = useState("");
   useEffect(() => {
     if (movimiento) {
-      setDescripcion((movimiento.descripcion || "").replace(MARCA_GUARDADO, ""));
+      setDescripcion((movimiento.descripcion || "").replace(MARCA_GUARDADO, "").replace(MARCA_VENTA, ""));
       setMonto(String(movimiento.monto));
     }
   }, [movimiento]);
   if (!movimiento) return null;
   const esGuardadoEnCaja = (movimiento.descripcion || "").startsWith(MARCA_GUARDADO);
+  const esVentaEnCaja = (movimiento.descripcion || "").startsWith(MARCA_VENTA);
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={onCerrar}>
@@ -3209,7 +3215,7 @@ function ModalEditarMovimiento({ movimiento, onGuardar, onCerrar, guardando }) {
         <div className="flex gap-2">
           <button onClick={onCerrar} className="flex-1 px-3 py-2.5 rounded-lg text-sm font-medium border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white">Cancelar</button>
           <button disabled={guardando || !descripcion.trim() || !(parseFloat(monto) > 0)}
-            onClick={() => onGuardar(movimiento, { descripcion: (esGuardadoEnCaja ? MARCA_GUARDADO : "") + descripcion.trim(), monto: parseFloat(monto) })}
+            onClick={() => onGuardar(movimiento, { descripcion: (esGuardadoEnCaja ? MARCA_GUARDADO : esVentaEnCaja ? MARCA_VENTA : "") + descripcion.trim(), monto: parseFloat(monto) })}
             className="flex-1 px-3 py-2.5 rounded-lg text-sm font-semibold bg-[#E3A73B] text-[#16233D] disabled:opacity-50 flex items-center justify-center gap-2">
             {guardando && <IconLoading />} Guardar
           </button>
@@ -3240,7 +3246,7 @@ async function ventasIncluyendoPendientes(ventasBase) {
   return [...ventasPendientes, ...ventasBase];
 }
 
-function PaginaCaja() {
+function PaginaCaja({ productos = [] }) {
   const [sesion, setSesion] = useState(null);
   const [movimientos, setMovimientos] = useState([]);
   const [historial, setHistorial] = useState([]);
@@ -3251,6 +3257,7 @@ function PaginaCaja() {
   const [fechaApertura, setFechaApertura] = useState(() => new Date().toISOString().slice(0, 10));
   const [nuevoTipo, setNuevoTipo] = useState("ingreso");
   const [nuevaDescripcion, setNuevaDescripcion] = useState("");
+  const [mostrarSugerencias, setMostrarSugerencias] = useState(false);
   const [nuevoMonto, setNuevoMonto] = useState("");
   const [procesando, setProcesando] = useState(false);
   const [tipoGuardado, setTipoGuardado] = useState("retiro");
@@ -3334,7 +3341,8 @@ function PaginaCaja() {
   // Desglose para el resumen de cierre (usa los movimientos reales, sin contar nada dos veces)
   const totalVentasHoy = ventasHoy.reduce((a, v) => a + v.cantidad * v.precio_venta, 0);
   const ingresoDesdeGuardado = movimientos.filter(m => m.tipo === "ingreso" && m.descripcion?.startsWith(MARCA_GUARDADO)).reduce((a, m) => a + Number(m.monto), 0);
-  const ingresosOtros = totalIngresos - ingresoDesdeGuardado;
+  const ingresoDesdeVentas = movimientos.filter(m => m.tipo === "ingreso" && m.descripcion?.startsWith(MARCA_VENTA)).reduce((a, m) => a + Number(m.monto), 0);
+  const ingresosOtros = totalIngresos - ingresoDesdeGuardado - ingresoDesdeVentas;
   const retirosHaciaGuardado = movimientos.filter(m => m.tipo === "gasto" && m.descripcion?.startsWith(MARCA_GUARDADO)).reduce((a, m) => a + Number(m.monto), 0);
   const gastosOtros = totalGastos - retirosHaciaGuardado;
   const totalRetiradoDeCaja = totalGastos; // incluye retiros hacia guardado y otros gastos, cada uno contado una sola vez
@@ -3513,8 +3521,34 @@ function PaginaCaja() {
                 <button onClick={() => setNuevoTipo("gasto")} className={`flex-1 py-2 rounded-lg text-sm font-medium ${nuevoTipo === "gasto" ? "bg-rose-600 text-white" : "bg-slate-100 dark:bg-neutral-900 text-slate-600 dark:text-white"}`}>Salida</button>
               </div>
               <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Descripción</label>
-              <input value={nuevaDescripcion} onChange={(e) => setNuevaDescripcion(e.target.value)} placeholder="Ej: Venta del día, compra de bolsas..."
-                className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm mb-3 outline-none focus:border-[#E3A73B]" />
+              <div className="relative mb-3">
+                <input
+                  value={nuevaDescripcion}
+                  onChange={(e) => { setNuevaDescripcion(e.target.value); setMostrarSugerencias(true); }}
+                  onFocus={() => setMostrarSugerencias(true)}
+                  onBlur={() => setTimeout(() => setMostrarSugerencias(false), 150)}
+                  placeholder="Ej: Venta del día, compra de bolsas..."
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm outline-none focus:border-[#E3A73B]" />
+                {mostrarSugerencias && nuevaDescripcion.trim().length > 0 && (() => {
+                  const coincidencias = productos.filter(p => p.nombre.toLowerCase().includes(nuevaDescripcion.trim().toLowerCase())).slice(0, 6);
+                  if (coincidencias.length === 0) return null;
+                  return (
+                    <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-white dark:bg-neutral-900 border border-slate-200 dark:border-white/10 rounded-lg shadow-lg overflow-hidden">
+                      {coincidencias.map(p => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onMouseDown={() => { setNuevaDescripcion(p.nombre); setMostrarSugerencias(false); }}
+                          className="w-full text-left px-3 py-2 text-sm text-slate-700 dark:text-white hover:bg-slate-100 dark:hover:bg-white/10 flex items-center justify-between gap-2"
+                        >
+                          <span className="truncate">{p.nombre}</span>
+                          <span className="text-[11px] text-slate-400 dark:text-white/40 shrink-0">{p.cantidad} en inventario</span>
+                        </button>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
               <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Monto</label>
               <input type="number" value={nuevoMonto} onChange={(e) => setNuevoMonto(e.target.value)} placeholder="0"
                 className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm mb-3 outline-none focus:border-[#E3A73B]" />
@@ -3533,7 +3567,7 @@ function PaginaCaja() {
                 {movimientos.map(m => (
                   <div key={m.id} className="flex justify-between items-center py-2 px-3 rounded-lg bg-slate-50 dark:bg-neutral-900">
                     <div>
-                      <div className="text-sm font-medium text-slate-700 dark:text-white">{(m.descripcion || (m.tipo === "ingreso" ? "Entrada de dinero" : "Salida de dinero")).replace(MARCA_GUARDADO, "💰 ")}</div>
+                      <div className="text-sm font-medium text-slate-700 dark:text-white">{descripcionMovimiento(m)}</div>
                       <div className="text-xs text-slate-400 font-mono">{new Date(m.creado_en).toLocaleTimeString()}</div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -3657,7 +3691,7 @@ function PaginaCaja() {
               {movimientos.filter(m => m.tipo === (panelAbierto === "ingresos" ? "ingreso" : "gasto")).map(m => (
                 <div key={m.id} className="flex items-center justify-between py-2.5 px-3 rounded-lg bg-slate-50 dark:bg-neutral-900">
                   <div className="min-w-0">
-                    <div className="text-sm font-medium text-slate-700 dark:text-white truncate">{(m.descripcion || "Sin descripción").replace(MARCA_GUARDADO, "💰 ")}</div>
+                    <div className="text-sm font-medium text-slate-700 dark:text-white truncate">{descripcionMovimiento(m)}</div>
                     <div className="text-xs text-slate-400 font-mono">{new Date(m.creado_en).toLocaleTimeString()}</div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -5598,11 +5632,28 @@ function AppInterna({ sesion, onCerrarSesion }) {
   };
 
   const handleRegistrarVenta = async (venta) => {
-    return conAlternativaOffline(
+    const resultado = await conAlternativaOffline(
       () => supaApi.registrarVenta(venta),
       "registrar_venta", venta,
       null // el producto ya se actualizó localmente vía handleActualizar; solo falta encolar la venta
     );
+    // Si la venta se registró en línea (no quedó pendiente por falta de conexión)
+    // y hay una caja abierta, se suma como ingreso automáticamente.
+    if (resultado !== null) {
+      try {
+        const sesionAbierta = await supaApi.obtenerSesionAbierta();
+        if (sesionAbierta) {
+          const monto = Number(venta.cantidad) * Number(venta.precio_venta);
+          await supaApi.crearMovimiento({
+            sesion_id: sesionAbierta.id,
+            tipo: "ingreso",
+            descripcion: `${MARCA_VENTA}Venta: ${venta.producto_nombre || "producto"}${venta.cantidad > 1 ? ` x${venta.cantidad}` : ""}`,
+            monto,
+          });
+        }
+      } catch (e) { /* la venta ya quedó guardada; si falla el registro en caja no bloqueamos al usuario */ }
+    }
+    return resultado;
   };
 
   const [clientes, setClientes] = useState([]);
@@ -5963,7 +6014,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
   const paginas = {
     dashboard: <PaginaDashboard productos={productos} stockBajo={stockBajo} valorStock={valorStock} gananciaAcumulada={gananciaAcumulada} unidadesVendidas={unidadesVendidas} totalPorCobrar={totalPorCobrar} clientesPendientes={clientesPendientes} recuperadoMes={recuperadoMes} verGanancias={permisos.ver_ganancias} onIrA={setPagina} />,
     inventario: <PaginaInventario productos={productos} clientes={clientes} cargando={cargando} error={error} onRecargar={cargarProductos} onCrear={handleCrear} onActualizar={handleActualizar} onEliminar={handleEliminar} onVentaRegistrada={handleRegistrarVenta} onCrearFiado={handleCrearFiado} verCostos={permisos.ver_costos} puedeEditar={permisos.editar} />,
-    caja: <PaginaCaja />,
+    caja: <PaginaCaja productos={productos} />,
     perdidas: <PaginaPerdidas productos={productos} onActualizarProducto={handleActualizar} onRecargarProductos={cargarProductos} />,
     historial: <PaginaHistorial productos={productos} onActualizarProducto={handleActualizar} onRecargarProductos={cargarProductos} />,
     estadisticas: <PaginaEstadisticas consumoHogar={consumoHogar} />,
