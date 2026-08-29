@@ -3136,7 +3136,7 @@ function PaginaUsuarios({ nombreNegocio }) {
   );
 }
 
-function PaginaDashboard({ productos, stockBajo, valorStock, gananciaAcumulada, unidadesVendidas, totalPorCobrar, clientesPendientes, recuperadoMes, verGanancias = true, onIrA }) {
+function PaginaDashboard({ productos, stockBajo, valorStock, gananciaAcumulada, unidadesVendidas, totalPorCobrar, clientesPendientes, recuperadoMes, verGanancias = true, onIrA, onVerVentas }) {
   return (
     <div className="space-y-6">
       <div>
@@ -3145,7 +3145,7 @@ function PaginaDashboard({ productos, stockBajo, valorStock, gananciaAcumulada, 
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="Valor en stock" value={`${formatMoneda(valorStock.toFixed(2))}`} icon={IconPackage} accent="bg-[#16233D]" onClick={onIrA ? () => onIrA("inventario") : undefined} />
-        <StatCard label="Unidades vendidas" value={unidadesVendidas} icon={IconCart} accent="bg-[#2471A3]" onClick={onIrA ? () => onIrA("estadisticas") : undefined} />
+        <StatCard label="Unidades vendidas" value={unidadesVendidas} icon={IconCart} accent="bg-[#2471A3]" onClick={onVerVentas || (onIrA ? () => onIrA("estadisticas") : undefined)} />
         {verGanancias && <StatCard label="Ganancia acumulada" value={`${formatMoneda(gananciaAcumulada.toFixed(2))}`} icon={IconChart} accent="bg-emerald-600" onClick={onIrA ? () => onIrA("estadisticas") : undefined} />}
         <StatCard label="Productos en alerta" value={stockBajo} icon={IconAlert} accent="bg-rose-600" onClick={onIrA ? () => onIrA("inventario") : undefined} />
       </div>
@@ -4849,11 +4849,13 @@ function PaginaInventario({ productos, clientes = [], cargando, error, onRecarga
   );
 }
 
-function PaginaHistorial({ productos, onActualizarProducto, onRecargarProductos }) {
+function PaginaHistorial({ productos, onActualizarProducto, onRecargarProductos, filtroInicial = "todos" }) {
   const [eventos, setEventos] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(null);
-  const [filtro, setFiltro] = useState("todos");
+  const [filtro, setFiltro] = useState(filtroInicial);
+
+  useEffect(() => { setFiltro(filtroInicial); }, [filtroInicial]);
 
   const cargar = useCallback(async () => {
     try {
@@ -5015,7 +5017,7 @@ function GraficaCanvas({ tipo, data, id }) {
   return <canvas ref={canvasRef} id={id}></canvas>;
 }
 
-function PaginaEstadisticas({ consumoHogar }) {
+function PaginaEstadisticas({ consumoHogar, onVerVentas }) {
   const [ventas, setVentas] = useState([]);
   const [perdidas, setPerdidas] = useState([]);
   const [cargando, setCargando] = useState(true);
@@ -5092,7 +5094,7 @@ function PaginaEstadisticas({ consumoHogar }) {
       {error && <div className="bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-sm rounded-lg p-3">{error}</div>}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="Unidades vendidas" value={unidadesVendidas} icon={IconCart} accent="bg-[#2471A3]" />
+        <StatCard label="Unidades vendidas" value={unidadesVendidas} icon={IconCart} accent="bg-[#2471A3]" onClick={onVerVentas} />
         <StatCard label="Ganancia total" value={`${formatMoneda(gananciaTotal.toFixed(2))}`} icon={IconChart} accent="bg-emerald-600" />
         <StatCard label="Pérdidas totales" value={`${formatMoneda(perdidaTotal.toFixed(2))}`} icon={IconAlert} accent="bg-rose-600" />
         <StatCard label="Ganancia neta" value={`${formatMoneda((gananciaTotal - perdidaTotal).toFixed(2))}`} icon={IconWallet} accent="bg-[#16233D]" />
@@ -5441,6 +5443,8 @@ function App() {
 
 function AppInterna({ sesion, onCerrarSesion }) {
   const [pagina, setPagina] = useState("inventario");
+  const [historialFiltroInicial, setHistorialFiltroInicial] = useState("todos");
+  const irAHistorialVentas = () => { setHistorialFiltroInicial("venta"); setPagina("historial"); };
   const [miMembresia, setMiMembresia] = useState(undefined); // undefined = cargando, null = admin principal
   useEffect(() => {
     supaApi.miMembresia().then(setMiMembresia).catch(() => setMiMembresia(null));
@@ -6012,12 +6016,12 @@ function AppInterna({ sesion, onCerrarSesion }) {
   }).reduce((a, p) => a + Number(p.monto), 0);
 
   const paginas = {
-    dashboard: <PaginaDashboard productos={productos} stockBajo={stockBajo} valorStock={valorStock} gananciaAcumulada={gananciaAcumulada} unidadesVendidas={unidadesVendidas} totalPorCobrar={totalPorCobrar} clientesPendientes={clientesPendientes} recuperadoMes={recuperadoMes} verGanancias={permisos.ver_ganancias} onIrA={setPagina} />,
+    dashboard: <PaginaDashboard productos={productos} stockBajo={stockBajo} valorStock={valorStock} gananciaAcumulada={gananciaAcumulada} unidadesVendidas={unidadesVendidas} totalPorCobrar={totalPorCobrar} clientesPendientes={clientesPendientes} recuperadoMes={recuperadoMes} verGanancias={permisos.ver_ganancias} onIrA={setPagina} onVerVentas={irAHistorialVentas} />,
     inventario: <PaginaInventario productos={productos} clientes={clientes} cargando={cargando} error={error} onRecargar={cargarProductos} onCrear={handleCrear} onActualizar={handleActualizar} onEliminar={handleEliminar} onVentaRegistrada={handleRegistrarVenta} onCrearFiado={handleCrearFiado} verCostos={permisos.ver_costos} puedeEditar={permisos.editar} />,
     caja: <PaginaCaja productos={productos} />,
     perdidas: <PaginaPerdidas productos={productos} onActualizarProducto={handleActualizar} onRecargarProductos={cargarProductos} />,
-    historial: <PaginaHistorial productos={productos} onActualizarProducto={handleActualizar} onRecargarProductos={cargarProductos} />,
-    estadisticas: <PaginaEstadisticas consumoHogar={consumoHogar} />,
+    historial: <PaginaHistorial productos={productos} onActualizarProducto={handleActualizar} onRecargarProductos={cargarProductos} filtroInicial={historialFiltroInicial} />,
+    estadisticas: <PaginaEstadisticas consumoHogar={consumoHogar} onVerVentas={irAHistorialVentas} />,
     cuentas: <PaginaCuentasPorCobrar clientes={clientes} pagosFiado={pagosFiado} productos={productos} cargando={cargandoCuentas} error={errorCuentas} onRecargar={cargarCuentasPorCobrar} onCrearCliente={handleCrearCliente} onActualizarCliente={handleActualizarCliente} onEliminarCliente={handleEliminarCliente} onCrearFiado={handleCrearFiado} onRegistrarPago={handleRegistrarPago} onEditarFiado={handleEditarFiado} onEliminarFiado={handleEliminarFiado} />,
     consumo: <PaginaConsumoHogar productos={productos} registros={consumoHogar} cargando={cargandoConsumo} error={errorConsumo} onRegistrar={handleRegistrarConsumo} onEliminar={handleEliminarConsumo} />,
     produccion: <PaginaProduccion productos={productos} lotes={lotes} cargando={cargandoLotes} error={errorLotes} onIniciar={handleIniciarLote} onAgregarIngrediente={handleAgregarIngredienteLote} onFinalizar={handleFinalizarLote} onEliminar={handleEliminarLote} />,
@@ -6043,7 +6047,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
             {navVisible.map((item) => (
               <React.Fragment key={item.id}>
                 {item.id === "configuracion" && <div className="h-px bg-white/10 my-2 mx-1" />}
-                <button onClick={() => { setPagina(item.id); setSidebarAbierto(false); }}
+                <button onClick={() => { setPagina(item.id); setHistorialFiltroInicial("todos"); setSidebarAbierto(false); }}
                   className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${pagina === item.id ? "bg-[#E3A73B] text-[#16233D]" : "text-white/80 hover:bg-white/10"}`}>
                   <span className="flex items-center gap-2.5"><item.icon /> {item.label}</span>
                   {!item.listo && <span className="text-[9px] uppercase font-bold bg-white/15 px-1.5 py-0.5 rounded">pronto</span>}
