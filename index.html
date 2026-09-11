@@ -506,6 +506,20 @@ const authApi = {
 // por sesión y se reutiliza, para poder filtrar explícitamente por negocio en
 // el cliente además de la seguridad del servidor (defensa adicional).
 let miNegocioIdCache = null;
+// Consulta pública (sin sesión) para la página que ve el cliente con su
+// link — usa la anon key directo, sin token de usuario, porque el cliente
+// nunca inicia sesión en Nova. Solo puede traer lo que la función
+// obtener_cuenta_publica() decide exponer para ese token exacto.
+async function obtenerCuentaPublica(token) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/obtener_cuenta_publica`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+    body: JSON.stringify({ p_token: token }),
+  });
+  if (!res.ok) throw new Error("No se pudo cargar el estado de cuenta");
+  return res.json();
+}
+
 async function obtenerMiNegocioId() {
   if (miNegocioIdCache) return miNegocioIdCache;
   const res = await peticionApi(`${SUPABASE_URL}/rest/v1/rpc/mi_negocio_id`, { method: "POST", body: "{}" });
@@ -783,6 +797,24 @@ const supaApi = {
     const negocioId = await obtenerMiNegocioId();
     const res = await peticionApi(`${SUPABASE_URL}/rest/v1/clientes?id=eq.${id}&negocio_id=eq.${negocioId}`, { method: "DELETE" });
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo eliminar el cliente"); }
+  },
+  // Genera (o devuelve, si ya tenía) el token público del cliente, para
+  // armar su link de estado de cuenta. No se genera hasta la primera vez
+  // que se comparte, así los clientes existentes no cambian de nada.
+  async obtenerOCrearTokenPublico(id) {
+    const negocioId = await obtenerMiNegocioId();
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/clientes?id=eq.${id}&negocio_id=eq.${negocioId}&select=token_publico&limit=1`);
+    if (!res.ok) throw new Error("No se pudo obtener el link del cliente");
+    const [actual] = await res.json();
+    if (actual?.token_publico) return actual.token_publico;
+    const nuevoToken = crypto.randomUUID();
+    const res2 = await peticionApi(`${SUPABASE_URL}/rest/v1/clientes?id=eq.${id}&negocio_id=eq.${negocioId}`, {
+      method: "PATCH",
+      extraHeaders: { Prefer: "return=representation" },
+      body: JSON.stringify({ token_publico: nuevoToken }),
+    });
+    if (!res2.ok) throw new Error("No se pudo generar el link del cliente");
+    return nuevoToken;
   },
 
   // --- Proveedores ---
@@ -1865,7 +1897,7 @@ function calcularEstadoCliente(cliente, ultimaActividad) {
   return { label: "Pendiente", dot: "🟡", tono: "warn" };
 }
 
-function ModalAccionesCliente({ cliente, onCerrar, onAgregarFiado, onAbonar, onHistorial, onEditar, onEliminar }) {
+function ModalAccionesCliente({ cliente, onCerrar, onAgregarFiado, onAbonar, onHistorial, onEditar, onEliminar, onCompartir, compartiendo }) {
   if (!cliente) return null;
   return (
     <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-40" onClick={onCerrar}>
@@ -1876,6 +1908,13 @@ function ModalAccionesCliente({ cliente, onCerrar, onAgregarFiado, onAbonar, onH
           <button onClick={onAgregarFiado} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5">🧾 Agregar fiado</button>
           <button onClick={onAbonar} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5">➕ Registrar abono</button>
           <button onClick={onHistorial} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5">📋 Ver historial</button>
+          {cliente.telefono ? (
+            <button onClick={onCompartir} disabled={compartiendo} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/10 flex items-center gap-2.5 disabled:opacity-50">
+              📤 {compartiendo ? "Preparando link..." : "Compartir por WhatsApp"}
+            </button>
+          ) : (
+            <div className="px-3 py-2 text-[11px] text-slate-400 dark:text-white/40">Agregale un teléfono para poder compartirle su estado de cuenta.</div>
+          )}
           <button onClick={onEditar} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5">✏️ Editar cliente</button>
           <button onClick={onEliminar} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/10 flex items-center gap-2.5">🗑️ Eliminar cliente</button>
         </div>
@@ -2517,6 +2556,20 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
   const [eliminandoId, setEliminandoId] = useState(null);
   const [clienteMenu, setClienteMenu] = useState(null);
   const [clienteParaFiado, setClienteParaFiado] = useState(null);
+  const [compartiendoId, setCompartiendoId] = useState(null);
+
+  const compartirCliente = async (cliente) => {
+    setCompartiendoId(cliente.id);
+    try {
+      const token = await supaApi.obtenerOCrearTokenPublico(cliente.id);
+      const link = `${window.location.origin}${window.location.pathname}#cuenta-${token}`;
+      const mensaje = `Hola ${cliente.nombre}! Acá podés ver tu estado de cuenta con nosotros, siempre actualizado:\n${link}`;
+      const telefonoLimpio = (cliente.telefono || "").replace(/[^0-9]/g, "");
+      window.open(`https://wa.me/${telefonoLimpio}?text=${encodeURIComponent(mensaje)}`, "_blank");
+      setClienteMenu(null);
+    } catch (e) { mostrarError(e.message); }
+    finally { setCompartiendoId(null); }
+  };
 
   const pagosPorCliente = {};
   const ultimaPorCliente = {};
@@ -2614,6 +2667,8 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
         onAbonar={() => { setClienteAbono(clienteMenu); setClienteMenu(null); }}
         onHistorial={() => { setClienteHistorial(clienteMenu); setClienteMenu(null); }}
         onEditar={() => { setClienteEditando(clienteMenu); setModalCliente(true); setClienteMenu(null); }}
+        onCompartir={() => compartirCliente(clienteMenu)}
+        compartiendo={compartiendoId === clienteMenu?.id}
         onEliminar={() => { const c = clienteMenu; setClienteMenu(null); eliminarCliente(c); }} />
 
       <ModalCliente abierto={modalCliente} cliente={clienteEditando} guardando={guardando} onGuardar={guardarCliente} onCerrar={() => { setModalCliente(false); setClienteEditando(null); }} />
@@ -5372,7 +5427,99 @@ function PantallaInvitacion({ invitacion, onAceptada }) {
   );
 }
 
+// Símbolos conocidos para la página pública del cliente. No depende del
+// negocio_id activo (ahí no hay sesión), así que usa el moneda_codigo que
+// ya viene incluido en la respuesta de obtener_cuenta_publica().
+function simboloMonedaPublico(codigo) {
+  return CATALOGO_MONEDAS[codigo]?.simbolo || (codigo ? codigo + " " : "");
+}
+function formatMonedaPublico(valor, codigo) {
+  const info = CATALOGO_MONEDAS[codigo];
+  const decimales = info ? info.decimales : 2;
+  const num = Number(valor);
+  return `${simboloMonedaPublico(codigo)}${(Number.isFinite(num) ? num : 0).toFixed(decimales)}`;
+}
+
+function PaginaCuentaPublica({ token }) {
+  const [datos, setDatos] = useState(undefined); // undefined = cargando
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    obtenerCuentaPublica(token)
+      .then(d => { if (d?.error) { setError("No encontramos esta cuenta. Pedile el link de nuevo a tu negocio."); } else { setDatos(d); } })
+      .catch(() => setError("No se pudo cargar. Revisá tu conexión a internet."));
+  }, [token]);
+
+  const fmt = (n) => formatMonedaPublico(n, datos?.moneda_codigo);
+  const fechaCorta = (iso) => new Date(iso).toLocaleDateString("es-NI", { day: "2-digit", month: "short", year: "numeric" });
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex flex-col items-center px-4 py-8">
+      <div className="w-full max-w-md">
+        <div className="text-center mb-6">
+          <div className="text-2xl font-bold text-[#16233D] font-display">✨ nova</div>
+          <p className="text-xs text-slate-400 mt-1">Estado de cuenta</p>
+        </div>
+
+        {error && <div className="bg-rose-50 border border-rose-200 text-rose-600 text-sm rounded-xl p-4 text-center">{error}</div>}
+
+        {datos === undefined && !error && <p className="text-center text-sm text-slate-400">Cargando...</p>}
+
+        {datos && !error && (
+          <>
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4 text-center">
+              <p className="text-sm text-slate-500">{datos.nombre_negocio}</p>
+              <p className="text-lg font-semibold text-slate-800 mt-1">{datos.cliente_nombre}</p>
+              <p className="text-xs text-slate-400 uppercase tracking-wide mt-4">Saldo pendiente</p>
+              <p className="text-3xl font-bold text-[#16233D] mt-1">{fmt(datos.saldo_pendiente)}</p>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4">
+              <h2 className="font-semibold text-slate-800 text-sm mb-3">Lo que te fiaron</h2>
+              {datos.fiados.length === 0 ? <p className="text-sm text-slate-400">No hay compras al fiado registradas.</p> : (
+                <div className="space-y-3">
+                  {datos.fiados.map((f, i) => (
+                    <div key={i} className="border-b border-slate-100 last:border-0 pb-2 last:pb-0">
+                      <div className="flex justify-between items-baseline">
+                        <span className="text-xs text-slate-400">{fechaCorta(f.creado_en)}</span>
+                        <span className="text-sm font-semibold text-slate-800">{fmt(f.total)}</span>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-0.5">{(f.productos || []).map(p => `${p.cantidad}x ${p.nombre}`).join(", ")}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-2xl p-5">
+              <h2 className="font-semibold text-slate-800 text-sm mb-3">Tus abonos</h2>
+              {datos.pagos.length === 0 ? <p className="text-sm text-slate-400">Todavía no hay abonos registrados.</p> : (
+                <div className="space-y-2">
+                  {datos.pagos.map((p, i) => (
+                    <div key={i} className="flex justify-between text-sm">
+                      <span className="text-slate-400">{fechaCorta(p.creado_en)}</span>
+                      <span className="font-semibold text-emerald-600">+{fmt(p.monto)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function App() {
+  const [tokenPublico] = useState(() => {
+    const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
+    return hash.startsWith("cuenta-") ? hash.slice(7) : null;
+  });
+  if (tokenPublico) {
+    return <PaginaCuentaPublica token={tokenPublico} />;
+  }
+
   const [tokenRecuperacion] = useState(() => {
     const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
     const params = new URLSearchParams(hash);
