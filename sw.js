@@ -1,64 +1,27 @@
-// Service Worker de Nova — permite abrir la app sin internet, incluso después
-// de cerrarla o reiniciar el teléfono, siempre que se haya abierto una vez
-// con conexión antes.
-const CACHE_NAME = "nova-app-shell-v2";
+// Service Worker de Nova — solo se encarga de mostrar las notificaciones
+// push que le llegan y abrir el link correcto al tocarlas. No cachea nada
+// ni interfiere con el resto de la app.
 
-const ARCHIVOS_APP = [
-  "./",
-  "./index.html",
-  "https://cdn.tailwindcss.com",
-  "https://unpkg.com/react@18.3.1/umd/react.production.min.js",
-  "https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js",
-  "https://unpkg.com/@babel/standalone@7.25.6/babel.min.js",
-  "https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js",
-  "https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap",
-];
-
-self.addEventListener("install", (evento) => {
-  self.skipWaiting();
-  evento.waitUntil(
-    caches.open(CACHE_NAME).then((cache) =>
-      Promise.all(
-        ARCHIVOS_APP.map((url) =>
-          fetch(url, { mode: url.startsWith("http") ? "no-cors" : "same-origin", cache: "no-store" })
-            .then((res) => cache.put(url, res))
-            .catch(() => {}) // si algo no se pudo guardar, seguimos sin romper la instalación
-        )
-      )
-    )
+self.addEventListener("push", (event) => {
+  let datos = { titulo: "Nova", cuerpo: "Tenés una actualización en tu cuenta.", url: "/" };
+  try { datos = event.data.json(); } catch (e) {}
+  event.waitUntil(
+    self.registration.showNotification(datos.titulo || "Nova", {
+      body: datos.cuerpo || "Tenés una actualización en tu cuenta.",
+      icon: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%2316233D'/%3E%3Ctext x='50' y='68' font-size='55' text-anchor='middle' fill='%23E3A73B'%3E%E2%9C%A8%3C/text%3E%3C/svg%3E",
+      badge: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%2316233D'/%3E%3C/svg%3E",
+      data: { url: datos.url || "/" },
+    })
   );
 });
 
-self.addEventListener("activate", (evento) => {
-  evento.waitUntil(
-    caches.keys().then((claves) =>
-      Promise.all(claves.filter((c) => c !== CACHE_NAME).map((c) => caches.delete(c)))
-    )
-  );
-  self.clients.claim();
-});
-
-// Estrategia: intenta traer la versión más nueva de internet (sin usar la
-// caché del navegador, "cache: no-store", para que sea siempre la más
-// fresca); si no hay conexión, sirve la copia guardada. Así, con internet
-// siempre ves lo último, y sin internet la app igual abre.
-self.addEventListener("fetch", (evento) => {
-  if (evento.request.method !== "GET") return;
-
-  evento.respondWith(
-    fetch(evento.request, { cache: "no-store" })
-      .then((respuestaRed) => {
-        const copia = respuestaRed.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(evento.request, copia)).catch(() => {});
-        return respuestaRed;
-      })
-      .catch(() =>
-        caches.match(evento.request).then((respuestaCache) => {
-          if (respuestaCache) return respuestaCache;
-          // Si piden la página principal y no hay nada guardado, mostramos el index cacheado
-          if (evento.request.mode === "navigate") return caches.match("./index.html");
-          return new Response("", { status: 408, statusText: "Sin conexión" });
-        })
-      )
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const destino = event.notification.data?.url || "/";
+  event.waitUntil(
+    clients.matchAll({ type: "window" }).then((lista) => {
+      for (const c of lista) { if ("focus" in c) { c.navigate(destino); return c.focus(); } }
+      if (clients.openWindow) return clients.openWindow(destino);
+    })
   );
 });
