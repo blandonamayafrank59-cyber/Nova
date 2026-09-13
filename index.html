@@ -544,14 +544,19 @@ async function guardarSuscripcionPublica(token, subscription) {
 }
 
 // Dispara la notificación push al cliente (si activó notificaciones). Se
-// llama "en segundo plano": si falla (sin suscripción, sin internet, etc.)
-// no debe interrumpir ni mostrar error por la venta/abono, que ya se guardó
-// bien de todos modos.
+// llama "en segundo plano": si falla, no debe interrumpir ni bloquear la
+// venta/abono, que ya se guardó bien de todos modos — pero sí avisa con un
+// aviso chiquito para poder diagnosticar mientras probamos esta función.
 function notificarCliente(clienteId, tipo) {
   peticionApi(`${SUPABASE_URL}/functions/v1/enviar-notificacion-push`, {
     method: "POST",
     body: JSON.stringify({ cliente_id: clienteId, tipo, origen: window.location.origin }),
-  }).catch(() => {});
+  }).then(async (res) => {
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { mostrarAviso(`[debug notificación] ${res.status}: ${d.error || "error desconocido"}`); }
+    else if (d.enviadas === 0) { mostrarAviso("[debug notificación] no había ninguna suscripción activa para este cliente"); }
+    else { mostrarAviso(`[debug notificación] enviada (${d.enviadas})`); }
+  }).catch((e) => { mostrarAviso(`[debug notificación] fallo de red: ${e.message}`); });
 }
 
 async function obtenerMiNegocioId() {
