@@ -520,6 +520,40 @@ async function obtenerCuentaPublica(token) {
   return res.json();
 }
 
+// Clave pública VAPID de Nova (segura de exponer; la privada solo vive en
+// la Edge Function del servidor). Necesaria para que el navegador del
+// cliente pueda suscribirse a notificaciones push.
+const VAPID_PUBLIC_KEY = "BOiIkHhnkZ04A-hpxtPtInhqc-4LyN4q5_cJSCAMVyP_1KoUABrerlKHybkHCtNruVOvswUcFKQ9fnZcAFWLd9k";
+function base64UrlAUint8Array(base64Url) {
+  const padding = "=".repeat((4 - (base64Url.length % 4)) % 4);
+  const base64 = (base64Url + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+// Guarda la suscripción push del cliente (sin sesión, validado por token).
+async function guardarSuscripcionPublica(token, subscription) {
+  const json = subscription.toJSON();
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/guardar_suscripcion_push`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+    body: JSON.stringify({ p_token: token, p_endpoint: json.endpoint, p_p256dh: json.keys.p256dh, p_auth: json.keys.auth }),
+  });
+  if (!res.ok) throw new Error("No se pudo activar la notificación");
+}
+
+// Dispara la notificación push al cliente (si activó notificaciones). Se
+// llama "en segundo plano": si falla (sin suscripción, sin internet, etc.)
+// no debe interrumpir ni mostrar error por la venta/abono, que ya se guardó
+// bien de todos modos.
+function notificarCliente(clienteId, tipo) {
+  peticionApi(`${SUPABASE_URL}/functions/v1/enviar-notificacion-push`, {
+    method: "POST",
+    body: JSON.stringify({ cliente_id: clienteId, tipo, origen: window.location.origin }),
+  }).catch(() => {});
+}
+
 async function obtenerMiNegocioId() {
   if (miNegocioIdCache) return miNegocioIdCache;
   const res = await peticionApi(`${SUPABASE_URL}/rest/v1/rpc/mi_negocio_id`, { method: "POST", body: "{}" });
@@ -5443,6 +5477,7 @@ function formatMonedaPublico(valor, codigo) {
 function PaginaCuentaPublica({ token }) {
   const [datos, setDatos] = useState(undefined); // undefined = cargando
   const [error, setError] = useState(null);
+  const [notif, setNotif] = useState("verificando"); // verificando | inactivo | activando | activo | no_soportado | denegado
 
   useEffect(() => {
     obtenerCuentaPublica(token)
@@ -5450,16 +5485,61 @@ function PaginaCuentaPublica({ token }) {
       .catch(() => setError("No se pudo cargar. Revisá tu conexión a internet."));
   }, [token]);
 
+  useEffect(() => {
+    (async () => {
+      if (!("serviceWorker" in navigator) || !("PushManager" in window)) { setNotif("no_soportado"); return; }
+      if (Notification.permission === "denied") { setNotif("denegado"); return; }
+      try {
+        const reg = await navigator.serviceWorker.register("./sw.js");
+        const sub = await reg.pushManager.getSubscription();
+        setNotif(sub ? "activo" : "inactivo");
+      } catch (e) { setNotif("inactivo"); }
+    })();
+  }, []);
+
+  const activarNotificaciones = async () => {
+    setNotif("activando");
+    try {
+      const permiso = await Notification.requestPermission();
+      if (permiso !== "granted") { setNotif("denegado"); return; }
+      const reg = await navigator.serviceWorker.ready;
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: base64UrlAUint8Array(VAPID_PUBLIC_KEY) });
+      }
+      await guardarSuscripcionPublica(token, sub);
+      setNotif("activo");
+    } catch (e) { setNotif("inactivo"); mostrarError("No se pudo activar la notificación. Probá de nuevo."); }
+  };
+
   const fmt = (n) => formatMonedaPublico(n, datos?.moneda_codigo);
   const fechaCorta = (iso) => new Date(iso).toLocaleDateString("es-NI", { day: "2-digit", month: "short", year: "numeric" });
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col items-center px-4 py-8">
+      <ToastContainer />
       <div className="w-full max-w-md">
         <div className="text-center mb-6">
           <div className="text-2xl font-bold text-[#16233D] font-display">✨ nova</div>
           <p className="text-xs text-slate-400 mt-1">Estado de cuenta</p>
         </div>
+
+        {(notif === "inactivo" || notif === "activando") && (
+          <button onClick={activarNotificaciones} disabled={notif === "activando"}
+            className="w-full mb-4 px-4 py-3 rounded-xl bg-[#16233D] text-white text-sm font-semibold disabled:opacity-50">
+            🔔 {notif === "activando" ? "Activando..." : "Activar notificaciones de mi cuenta"}
+          </button>
+        )}
+        {notif === "activo" && (
+          <div className="w-full mb-4 px-4 py-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-medium text-center">
+            🔔 Notificaciones activadas — te avisamos cuando haya novedades
+          </div>
+        )}
+        {notif === "denegado" && (
+          <div className="w-full mb-4 px-4 py-2.5 rounded-xl bg-slate-100 text-slate-500 text-xs text-center">
+            Bloqueaste las notificaciones para esta página. Activalas desde los ajustes de tu navegador si querés recibir avisos.
+          </div>
+        )}
 
         {error && <div className="bg-rose-50 border border-rose-200 text-rose-600 text-sm rounded-xl p-4 text-center">{error}</div>}
 
@@ -5960,6 +6040,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
     const cliente = clientes.find(c => c.id === cliente_id);
     const nuevoSaldo = (Number(cliente?.saldo_pendiente) || 0) + total;
     await supaApi.actualizarCliente(cliente_id, { saldo_pendiente: nuevoSaldo });
+    notificarCliente(cliente_id, "fiado");
     await Promise.all([cargarProductos(), cargarCuentasPorCobrar()]);
   };
 
@@ -5967,6 +6048,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
     await supaApi.crearPagoFiado({ cliente_id: cliente.id, monto });
     const nuevoSaldo = Math.max(0, (Number(cliente.saldo_pendiente) || 0) - monto);
     await supaApi.actualizarCliente(cliente.id, { saldo_pendiente: nuevoSaldo });
+    notificarCliente(cliente.id, "abono");
     const sesionAbierta = await supaApi.obtenerSesionAbierta();
     if (sesionAbierta) {
       await supaApi.crearMovimiento({ sesion_id: sesionAbierta.id, tipo: "ingreso", descripcion: `Abono de fiado — ${cliente.nombre}`, monto });
