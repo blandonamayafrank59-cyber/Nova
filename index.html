@@ -216,7 +216,17 @@ async function pendienteAgregar(tipo, payload) {
       tx.onerror = () => reject(tx.error);
     });
     notificarConexion("sin_conexion");
+    notificarPendientesCambio();
   } catch (e) { /* sin guardado local disponible, no se puede encolar */ }
+}
+
+// Listeners aparte para el contador de pendientes (independiente del estado
+// de conexión, para que el indicador pueda mostrar "quedan 3" sin tener que
+// recalcularlo a mano en cada pantalla).
+let listenersPendientesCount = [];
+async function notificarPendientesCambio() {
+  const cantidad = (await pendientesListar()).length;
+  listenersPendientesCount.forEach(fn => { try { fn(cantidad); } catch (e) {} });
 }
 
 async function pendientesListar() {
@@ -240,8 +250,23 @@ async function pendienteEliminar(id) {
       tx.oncomplete = resolve;
       tx.onerror = () => reject(tx.error);
     });
+    notificarPendientesCambio();
   } catch (e) { /* no crítico */ }
 }
+
+// --- IDs temporales para registros creados sin conexión ---
+// Cuando se crea un cliente offline, por ejemplo, no tiene todavía su ID
+// real de Supabase. Le asignamos uno temporal (idLocal) para poder
+// mostrarlo y referenciarlo ya mismo (ej. crearle un fiado enseguida, sin
+// esperar a sincronizar). "mapaIdsLocales" guarda la equivalencia
+// local→real una vez que ese registro sí se sincroniza, para que las
+// operaciones que dependían de él (el fiado, el abono) se enganchen al ID
+// correcto al subirse.
+function idLocal() { return `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`; }
+function esIdLocal(id) { return typeof id === "string" && id.startsWith("local_"); }
+async function mapaIdsLeer() { return (await cacheLeer("_mapa_ids_locales")) || {}; }
+async function mapaIdsGuardar(mapa) { await cacheGuardar("_mapa_ids_locales", mapa); }
+function resolverIdConMapa(id, mapa) { return esIdLocal(id) ? (mapa[id] || id) : id; }
 
 // --- Estado de conexión (detección real, no solo navigator.onLine) ---
 let estadoConexionGlobal = "conectado";
@@ -264,6 +289,24 @@ async function hayConexionReal() {
   }
 }
 
+async function pendienteMarcarError(id, mensaje) {
+  try {
+    const db = await abrirDBOffline();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction("pendientes", "readwrite");
+      const store = tx.objectStore("pendientes");
+      const req = store.get(id);
+      req.onsuccess = () => {
+        const registro = req.result;
+        if (registro) store.put({ ...registro, error: mensaje });
+      };
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+    notificarPendientesCambio();
+  } catch (e) { /* no crítico */ }
+}
+
 let sincronizando = false;
 async function sincronizarPendientes() {
   if (sincronizando) return;
@@ -272,25 +315,57 @@ async function sincronizarPendientes() {
   sincronizando = true;
   notificarConexion("sincronizando");
   let huboErrorDeRed = false;
-  for (const p of pendientes.sort((a, b) => a.id - b.id)) {
+  let huboErrorReal = false;
+  const mapaIds = await mapaIdsLeer();
+  for (const p of pendientes.filter(x => !x.error).sort((a, b) => a.id - b.id)) {
     try {
       if (p.tipo === "crear_producto") await supaApi.crearProducto(p.payload);
       else if (p.tipo === "actualizar_producto") await supaApi.actualizarProducto(p.payload.id, p.payload.cambios);
       else if (p.tipo === "eliminar_producto") await supaApi.eliminarProducto(p.payload.id);
       else if (p.tipo === "registrar_venta") await supaApi.registrarVenta(p.payload);
+      else if (p.tipo === "actualizar_cliente") await supaApi.actualizarCliente(resolverIdConMapa(p.payload.id, mapaIds), p.payload.cambios);
+      else if (p.tipo === "crear_movimiento") {
+        const pago = { ...p.payload };
+        pago.sesion_id = resolverIdConMapa(pago.sesion_id, mapaIds);
+        await supaApi.crearMovimiento(pago);
+      }
+      else if (p.tipo === "crear_cliente") {
+        const creado = await supaApi.crearCliente(p.payload.datos);
+        const real = Array.isArray(creado) ? creado[0] : creado;
+        mapaIds[p.payload.idLocal] = real.id;
+        await mapaIdsGuardar(mapaIds);
+      }
+      else if (p.tipo === "crear_fiado_completo") {
+        const clienteId = resolverIdConMapa(p.payload.cliente_id, mapaIds);
+        await supaApi.crearFiadoYActualizarSaldo(clienteId, p.payload.productos, p.payload.total, p.payload.nuevoSaldo);
+      }
+      else if (p.tipo === "crear_pago_completo") {
+        const clienteId = resolverIdConMapa(p.payload.cliente_id, mapaIds);
+        const sesionId = p.payload.sesion_id ? resolverIdConMapa(p.payload.sesion_id, mapaIds) : null;
+        await supaApi.crearPagoYActualizarSaldo(clienteId, p.payload.monto, p.payload.nuevoSaldo, sesionId, p.payload.descripcionMovimiento);
+      }
+      else if (p.tipo === "crear_nota") await supaApi.crearNota(p.payload);
+      else if (p.tipo === "actualizar_nota") await supaApi.actualizarNota(p.payload.id, p.payload.cambios);
+      else if (p.tipo === "eliminar_nota") await supaApi.eliminarNota(p.payload.id);
       await pendienteEliminar(p.id);
     } catch (e) {
       if (e instanceof ErrorDeRed) {
         huboErrorDeRed = true;
       } else {
-        // No es un problema de conexión: reintentarlo por siempre no va a
-        // arreglarlo. Se descarta para no dejar el estado en un bucle.
-        await pendienteEliminar(p.id);
+        // No es un problema de conexión (ej: dato inválido). No lo
+        // descartamos: lo dejamos marcado con el error para no perder el
+        // cambio, y avisamos — reintentar esto solo para siempre no lo iba
+        // a arreglar solo.
+        huboErrorReal = true;
+        await pendienteMarcarError(p.id, e.message || "Error al sincronizar");
       }
     }
   }
   sincronizando = false;
-  if (huboErrorDeRed) {
+  if (huboErrorReal) {
+    notificarConexion("error");
+    mostrarError("Algunos cambios no se pudieron subir (no es un problema de conexión). Tus datos siguen guardados en el dispositivo — avisale a soporte para revisarlos.");
+  } else if (huboErrorDeRed) {
     notificarConexion("sin_conexion");
   } else {
     notificarConexion("sincronizado");
@@ -431,16 +506,27 @@ function ModalConfirmacion() {
 
 function IndicadorConexion() {
   const [estado, setEstado] = useState(estadoConexionGlobal);
+  const [pendientesCant, setPendientesCant] = useState(0);
   useEffect(() => {
     const fn = (nuevoEstado) => setEstado(nuevoEstado);
+    const fnCant = (n) => setPendientesCant(n);
     listenersConexion.push(fn);
-    return () => { listenersConexion = listenersConexion.filter(l => l !== fn); };
+    listenersPendientesCount.push(fnCant);
+    pendientesListar().then(p => setPendientesCant(p.length));
+    return () => {
+      listenersConexion = listenersConexion.filter(l => l !== fn);
+      listenersPendientesCount = listenersPendientesCount.filter(l => l !== fnCant);
+    };
   }, []);
-  if (estado === "conectado") return null;
+  if (estado === "conectado" && pendientesCant === 0) return null;
+  if (estado === "sin_conexion" && pendientesCant > 0) {
+    return <div className="text-[11px] font-medium px-2.5 py-1 rounded-full bg-blue-50 dark:bg-blue-900/20 text-[#2471A3] dark:text-blue-300 whitespace-nowrap">🔵 {pendientesCant} cambio{pendientesCant !== 1 ? "s" : ""} pendiente{pendientesCant !== 1 ? "s" : ""} de sincronizar</div>;
+  }
   const config = {
     sin_conexion: { texto: "🟠 Sin conexión — trabajando offline", clase: "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400" },
     sincronizando: { texto: "🔄 Sincronizando...", clase: "bg-blue-50 dark:bg-blue-900/20 text-[#2471A3] dark:text-blue-300" },
-    sincronizado: { texto: "✅ Todo sincronizado", clase: "bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400" },
+    sincronizado: { texto: "🟢 Todo sincronizado", clase: "bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400" },
+    error: { texto: "🔴 Error al sincronizar — tus datos están a salvo en el dispositivo", clase: "bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400" },
   };
   const c = config[estado];
   if (!c) return null;
@@ -1060,6 +1146,24 @@ const supaApi = {
     });
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo registrar el pago"); }
     return res.json();
+  },
+  // Crea el fiado y actualiza el saldo del cliente en un solo paso atómico
+  // (todo o nada), para que una desconexión a mitad de camino nunca deje
+  // datos a medias ni pueda duplicarse al reintentar.
+  async crearFiadoYActualizarSaldo(clienteId, productos, total, nuevoSaldo) {
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/rpc/crear_fiado_y_actualizar_saldo`, {
+      method: "POST",
+      body: JSON.stringify({ p_cliente_id: clienteId, p_productos: productos, p_total: total, p_nuevo_saldo: nuevoSaldo }),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo registrar el fiado"); }
+  },
+  // Igual para el abono: pago + saldo + (si hay caja abierta) el ingreso, todo junto.
+  async crearPagoYActualizarSaldo(clienteId, monto, nuevoSaldo, sesionId, descripcionMovimiento) {
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/rpc/crear_pago_y_actualizar_saldo`, {
+      method: "POST",
+      body: JSON.stringify({ p_cliente_id: clienteId, p_monto: monto, p_nuevo_saldo: nuevoSaldo, p_sesion_id: sesionId || null, p_descripcion_movimiento: descripcionMovimiento || null }),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo registrar el abono"); }
   },
 
   // --- Consumo del hogar ---
@@ -2124,7 +2228,10 @@ function ModalHistorialCliente({ abierto, cliente, pagos, onCerrar, onEditarFiad
   const recargar = useCallback(() => {
     if (!cliente) return;
     setCargando(true);
-    supaApi.listarFiadosCliente(cliente.id).then(setFiados).catch(() => setFiados([])).finally(() => setCargando(false));
+    obtenerConRespaldo(`fiados_cliente_${cliente.id}`, () => supaApi.listarFiadosCliente(cliente.id))
+      .then(({ datos, offline }) => { setFiados(datos); if (offline) notificarConexion("sin_conexion"); })
+      .catch(() => setFiados([]))
+      .finally(() => setCargando(false));
   }, [cliente]);
 
   useEffect(() => {
@@ -3465,9 +3572,19 @@ function PaginaCaja({ productos = [] }) {
     if (monto <= 0) { mostrarError("Poné un monto mayor a 0"); return; }
     setProcesando(true);
     try {
-      await supaApi.crearMovimiento({ sesion_id: sesion.id, tipo: nuevoTipo, descripcion: nuevaDescripcion.trim(), monto });
+      const nuevoMovimiento = { sesion_id: sesion.id, tipo: nuevoTipo, descripcion: nuevaDescripcion.trim(), monto };
+      const resultado = await conAlternativaOffline(
+        () => supaApi.crearMovimiento(nuevoMovimiento),
+        "crear_movimiento", nuevoMovimiento,
+        async () => {
+          const provisional = { ...nuevoMovimiento, id: idLocal(), creado_en: new Date().toISOString(), _local: true };
+          const actualizados = [provisional, ...movimientos];
+          await cacheGuardar("caja_movimientos_abiertos", actualizados);
+          setMovimientos(actualizados);
+        }
+      );
       setNuevaDescripcion(""); setNuevoMonto("");
-      await cargarTodo();
+      if (resultado !== null) await cargarTodo();
     } catch (e) { mostrarError(e.message); }
     finally { setProcesando(false); }
   };
@@ -5873,22 +5990,30 @@ function AppInterna({ sesion, onCerrarSesion }) {
       "registrar_venta", venta,
       null // el producto ya se actualizó localmente vía handleActualizar; solo falta encolar la venta
     );
-    // Si la venta se registró en línea (no quedó pendiente por falta de conexión)
-    // y hay una caja abierta, se suma como ingreso automáticamente.
-    if (resultado !== null) {
-      try {
-        const sesionAbierta = await supaApi.obtenerSesionAbierta();
-        if (sesionAbierta) {
-          const monto = Number(venta.cantidad) * Number(venta.precio_venta);
-          await supaApi.crearMovimiento({
-            sesion_id: sesionAbierta.id,
-            tipo: "ingreso",
-            descripcion: `${MARCA_VENTA}Venta: ${venta.producto_nombre || "producto"}${venta.cantidad > 1 ? ` x${venta.cantidad}` : ""}`,
-            monto,
-          });
-        }
-      } catch (e) { /* la venta ya quedó guardada; si falla el registro en caja no bloqueamos al usuario */ }
-    }
+    // El ingreso en caja correspondiente a la venta se registra siempre,
+    // esté o no la venta online — si no hay conexión, se encola igual que
+    // la venta (antes se perdía en silencio si fallaba estando offline).
+    try {
+      const { datos: sesionAbierta } = await obtenerConRespaldo("caja_sesion", () => supaApi.obtenerSesionAbierta());
+      if (sesionAbierta) {
+        const monto = Number(venta.cantidad) * Number(venta.precio_venta);
+        const movimiento = {
+          sesion_id: sesionAbierta.id,
+          tipo: "ingreso",
+          descripcion: `${MARCA_VENTA}Venta: ${venta.producto_nombre || "producto"}${venta.cantidad > 1 ? ` x${venta.cantidad}` : ""}`,
+          monto,
+        };
+        await conAlternativaOffline(
+          () => supaApi.crearMovimiento(movimiento),
+          "crear_movimiento", movimiento,
+          async () => {
+            const actuales = (await cacheLeer("caja_movimientos_abiertos")) || [];
+            const provisional = { ...movimiento, id: idLocal(), creado_en: new Date().toISOString(), _local: true };
+            await cacheGuardar("caja_movimientos_abiertos", [provisional, ...actuales]);
+          }
+        );
+      }
+    } catch (e) { /* la venta ya quedó guardada; si falla el registro en caja no bloqueamos al usuario */ }
     return resultado;
   };
 
@@ -5923,8 +6048,34 @@ function AppInterna({ sesion, onCerrarSesion }) {
     return () => clearInterval(intervalo);
   }, [cargarCuentasPorCobrar]);
 
-  const handleCrearCliente = async (datos) => { await supaApi.crearCliente(datos); await cargarCuentasPorCobrar(); };
-  const handleActualizarCliente = async (id, cambios) => { await supaApi.actualizarCliente(id, cambios); await cargarCuentasPorCobrar(); };
+  const handleCrearCliente = async (datos) => {
+    const idTemporal = idLocal();
+    const resultado = await conAlternativaOffline(
+      () => supaApi.crearCliente(datos),
+      "crear_cliente", { idLocal: idTemporal, datos },
+      async () => {
+        const actuales = (await cacheLeer("clientes")) || clientes;
+        const provisional = { ...datos, id: idTemporal, saldo_pendiente: 0, creado_en: new Date().toISOString(), _local: true };
+        const actualizados = [...actuales, provisional];
+        await cacheGuardar("clientes", actualizados);
+        setClientes(actualizados);
+      }
+    );
+    if (resultado !== null) await cargarCuentasPorCobrar();
+  };
+  const handleActualizarCliente = async (id, cambios) => {
+    const resultado = await conAlternativaOffline(
+      () => supaApi.actualizarCliente(id, cambios),
+      "actualizar_cliente", { id, cambios },
+      async () => {
+        const actuales = (await cacheLeer("clientes")) || clientes;
+        const actualizados = actuales.map(c => c.id === id ? { ...c, ...cambios } : c);
+        await cacheGuardar("clientes", actualizados);
+        setClientes(actualizados);
+      }
+    );
+    if (resultado !== null) await cargarCuentasPorCobrar();
+  };
 
   const [faltantes, setFaltantes] = useState([]);
   const [proveedores, setProveedores] = useState([]);
@@ -5990,9 +6141,47 @@ function AppInterna({ sesion, onCerrarSesion }) {
     return () => clearInterval(intervalo);
   }, [cargarNotas]);
 
-  const handleCrearNota = async (datos) => { await supaApi.crearNota(datos); await cargarNotas(); };
-  const handleActualizarNota = async (id, cambios) => { await supaApi.actualizarNota(id, cambios); await cargarNotas(); };
-  const handleEliminarNota = async (nota) => { await supaApi.eliminarNota(nota.id); await cargarNotas(); };
+  const handleCrearNota = async (datos) => {
+    const idTemporal = idLocal();
+    const resultado = await conAlternativaOffline(
+      () => supaApi.crearNota(datos),
+      "crear_nota", datos,
+      async () => {
+        const actuales = (await cacheLeer("notas")) || notas;
+        const provisional = { ...datos, id: idTemporal, creado_en: new Date().toISOString(), _local: true };
+        const actualizados = [provisional, ...actuales];
+        await cacheGuardar("notas", actualizados);
+        setNotas(actualizados);
+      }
+    );
+    if (resultado !== null) await cargarNotas();
+  };
+  const handleActualizarNota = async (id, cambios) => {
+    const resultado = await conAlternativaOffline(
+      () => supaApi.actualizarNota(id, cambios),
+      "actualizar_nota", { id, cambios },
+      async () => {
+        const actuales = (await cacheLeer("notas")) || notas;
+        const actualizados = actuales.map(n => n.id === id ? { ...n, ...cambios } : n);
+        await cacheGuardar("notas", actualizados);
+        setNotas(actualizados);
+      }
+    );
+    if (resultado !== null) await cargarNotas();
+  };
+  const handleEliminarNota = async (nota) => {
+    const resultado = await conAlternativaOffline(
+      () => supaApi.eliminarNota(nota.id),
+      "eliminar_nota", { id: nota.id },
+      async () => {
+        const actuales = (await cacheLeer("notas")) || notas;
+        const actualizados = actuales.filter(n => n.id !== nota.id);
+        await cacheGuardar("notas", actualizados);
+        setNotas(actualizados);
+      }
+    );
+    if (resultado !== null) await cargarNotas();
+  };
 
   const [equipos, setEquipos] = useState([]);
   const [asignacionesEquipos, setAsignacionesEquipos] = useState([]);
@@ -6032,34 +6221,45 @@ function AppInterna({ sesion, onCerrarSesion }) {
   const handleActualizarCantidadEquipo = async (productoId, equipoId, cantidad) => { await supaApi.actualizarCantidadEnEquipo(productoId, equipoId, cantidad); await cargarEquipos(); };
 
   const handleCrearFiado = async ({ cliente_id, productos: items, total }) => {
-    const cantidadesLocales = {};
     for (const item of items) {
       const producto = productos.find(p => p.id === item.producto_id);
       if (producto) {
-        if (!(producto.id in cantidadesLocales)) cantidadesLocales[producto.id] = producto.cantidad;
-        cantidadesLocales[producto.id] = Math.max(0, cantidadesLocales[producto.id] - item.cantidad);
-        await supaApi.actualizarProducto(producto.id, { cantidad: cantidadesLocales[producto.id] });
+        const nuevaCantidad = Math.max(0, Number(producto.cantidad) - item.cantidad);
+        await handleActualizar(producto.id, { cantidad: nuevaCantidad });
       }
     }
-    await supaApi.crearFiado({ cliente_id, productos: items, total });
     const cliente = clientes.find(c => c.id === cliente_id);
     const nuevoSaldo = (Number(cliente?.saldo_pendiente) || 0) + total;
-    await supaApi.actualizarCliente(cliente_id, { saldo_pendiente: nuevoSaldo });
-    notificarCliente(cliente_id, "fiado");
+    const resultado = await conAlternativaOffline(
+      () => supaApi.crearFiadoYActualizarSaldo(cliente_id, items, total, nuevoSaldo),
+      "crear_fiado_completo", { cliente_id, productos: items, total, nuevoSaldo },
+      async () => {
+        const actuales = (await cacheLeer("clientes")) || clientes;
+        const actualizados = actuales.map(c => c.id === cliente_id ? { ...c, saldo_pendiente: nuevoSaldo } : c);
+        await cacheGuardar("clientes", actualizados);
+        setClientes(actualizados);
+      }
+    );
+    if (resultado !== null) notificarCliente(cliente_id, "fiado");
     await Promise.all([cargarProductos(), cargarCuentasPorCobrar()]);
   };
 
   const handleRegistrarPago = async (cliente, monto) => {
-    await supaApi.crearPagoFiado({ cliente_id: cliente.id, monto });
     const nuevoSaldo = Math.max(0, (Number(cliente.saldo_pendiente) || 0) - monto);
-    await supaApi.actualizarCliente(cliente.id, { saldo_pendiente: nuevoSaldo });
-    notificarCliente(cliente.id, "abono");
-    const sesionAbierta = await supaApi.obtenerSesionAbierta();
-    if (sesionAbierta) {
-      await supaApi.crearMovimiento({ sesion_id: sesionAbierta.id, tipo: "ingreso", descripcion: `Abono de fiado — ${cliente.nombre}`, monto });
-    } else {
-      mostrarError("El pago se registró, pero no hay una caja abierta ahora mismo — abrí la caja para que este ingreso se sume ahí.");
-    }
+    const { datos: sesionAbierta } = await obtenerConRespaldo("caja_sesion", () => supaApi.obtenerSesionAbierta());
+    const descripcionMovimiento = `Abono de fiado — ${cliente.nombre}`;
+    const resultado = await conAlternativaOffline(
+      () => supaApi.crearPagoYActualizarSaldo(cliente.id, monto, nuevoSaldo, sesionAbierta?.id || null, descripcionMovimiento),
+      "crear_pago_completo", { cliente_id: cliente.id, monto, nuevoSaldo, sesion_id: sesionAbierta?.id || null, descripcionMovimiento },
+      async () => {
+        const actuales = (await cacheLeer("clientes")) || clientes;
+        const actualizados = actuales.map(c => c.id === cliente.id ? { ...c, saldo_pendiente: nuevoSaldo } : c);
+        await cacheGuardar("clientes", actualizados);
+        setClientes(actualizados);
+      }
+    );
+    if (!sesionAbierta) mostrarAviso("El pago se registró, pero no hay una caja abierta ahora mismo — abrí la caja para que este ingreso se sume ahí.");
+    if (resultado !== null) notificarCliente(cliente.id, "abono");
     await cargarCuentasPorCobrar();
   };
 
