@@ -347,6 +347,15 @@ async function sincronizarPendientes() {
       else if (p.tipo === "crear_nota") await supaApi.crearNota(p.payload);
       else if (p.tipo === "actualizar_nota") await supaApi.actualizarNota(p.payload.id, p.payload.cambios);
       else if (p.tipo === "eliminar_nota") await supaApi.eliminarNota(p.payload.id);
+      else if (p.tipo === "crear_comision") {
+        const clienteId = resolverIdConMapa(p.payload.cliente_id, mapaIds);
+        await supaApi.crearComisionFiado({ ...p.payload, cliente_id: clienteId });
+      }
+      else if (p.tipo === "crear_historial") {
+        const clienteId = resolverIdConMapa(p.payload.cliente_id, mapaIds);
+        await supaApi.crearHistorialCredito({ ...p.payload, cliente_id: clienteId });
+      }
+      else if (p.tipo === "guardar_config_negocio") await supaApi.guardarConfigNegocio(p.payload);
       await pendienteEliminar(p.id);
     } catch (e) {
       if (e instanceof ErrorDeRed) {
@@ -1164,6 +1173,42 @@ const supaApi = {
       body: JSON.stringify({ p_cliente_id: clienteId, p_monto: monto, p_nuevo_saldo: nuevoSaldo, p_sesion_id: sesionId || null, p_descripcion_movimiento: descripcionMovimiento || null }),
     });
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo registrar el abono"); }
+  },
+
+  // --- Comisiones por atraso (siempre manuales, nunca automáticas) ---
+  async listarComisionesCliente(clienteId) {
+    const negocioId = await obtenerMiNegocioId();
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/comisiones_fiado?cliente_id=eq.${clienteId}&negocio_id=eq.${negocioId}&select=*&order=creado_en.desc`);
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudieron cargar las comisiones"); }
+    return res.json();
+  },
+  async crearComisionFiado(comision) {
+    const negocioId = await obtenerMiNegocioId();
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/comisiones_fiado`, {
+      method: "POST",
+      extraHeaders: { Prefer: "return=representation" },
+      body: JSON.stringify({ ...comision, negocio_id: negocioId, aplicado_por: currentUserId }),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo registrar la comisión"); }
+    return res.json();
+  },
+
+  // --- Historial de crédito (avisos, cambios de estado, comisiones, clasificaciones) ---
+  async listarHistorialCliente(clienteId) {
+    const negocioId = await obtenerMiNegocioId();
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/historial_credito?cliente_id=eq.${clienteId}&negocio_id=eq.${negocioId}&select=*&order=creado_en.desc`);
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo cargar el historial"); }
+    return res.json();
+  },
+  async crearHistorialCredito(registro) {
+    const negocioId = await obtenerMiNegocioId();
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/historial_credito`, {
+      method: "POST",
+      extraHeaders: { Prefer: "return=representation" },
+      body: JSON.stringify({ ...registro, negocio_id: negocioId }),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo guardar en el historial"); }
+    return res.json();
   },
 
   // --- Consumo del hogar ---
@@ -2031,33 +2076,85 @@ function PaginaConfiguracion({ nombreNegocio, setNombreNegocio, logo, onLogoChan
   );
 }
 
-function calcularEstadoCliente(cliente, ultimaActividad) {
-  const saldo = Number(cliente.saldo_pendiente) || 0;
-  if (saldo <= 0) return { label: "Al día", dot: "🟢", tono: "ok" };
-  const fechaRef = ultimaActividad || cliente.creado_en;
-  const dias = fechaRef ? (Date.now() - new Date(fechaRef).getTime()) / 86400000 : 999;
-  if (dias > 15) return { label: "Atrasado", dot: "🔴", tono: "danger" };
-  return { label: "Pendiente", dot: "🟡", tono: "warn" };
+// Reglas de crédito por defecto (se sobreescriben con negocio_config.reglas_credito).
+// No están fijas en el código: cualquier negocio puede tener las suyas.
+const REGLAS_CREDITO_DEFAULT = { dias_plazo: 15, dias_proximo_vencer: 3, comision_porcentaje: 2, credito_nuevo_segun_abonado: true };
+
+// Rango de atraso, para agrupar clientes atrasados (16-30 / 31-60 / 61-90 / +90 días).
+function calcularRangoAtraso(diasAtraso) {
+  if (diasAtraso == null || diasAtraso < 1) return null;
+  if (diasAtraso <= 30) return "16-30 días";
+  if (diasAtraso <= 60) return "31-60 días";
+  if (diasAtraso <= 90) return "61-90 días";
+  return "Más de 90 días";
 }
 
-function ModalAccionesCliente({ cliente, onCerrar, onAgregarFiado, onAbonar, onHistorial, onEditar, onEliminar, onCompartir, compartiendo }) {
+// Máquina de estados: Al día → Próximo a vencer → Vencido → Bloqueado (y Desbloqueado al pagar/reactivar).
+// La categoría manual (deuda antigua / recuperado) la decide el administrador y tiene prioridad sobre el cálculo automático.
+function calcularEstadoCliente(cliente, ultimaActividad, reglas = REGLAS_CREDITO_DEFAULT) {
+  const saldo = Number(cliente.saldo_pendiente) || 0;
+
+  if (cliente.categoria_manual === "deuda_antigua") {
+    return { label: "Deuda antigua", dot: "🔴", tono: "danger", categoria: "deuda_antigua", diasAtraso: null, rango: null };
+  }
+  if (cliente.categoria_manual === "recuperado" && saldo <= 0) {
+    return { label: "Recuperado", dot: "✅", tono: "ok", categoria: "recuperado", diasAtraso: null, rango: null };
+  }
+  if (saldo <= 0) {
+    return { label: "Al día", dot: "🟢", tono: "ok", categoria: "activo", diasAtraso: 0, rango: null };
+  }
+  if (cliente.bloqueado) {
+    const fechaRefB = ultimaActividad || cliente.creado_en;
+    const diasB = fechaRefB ? Math.floor((Date.now() - new Date(fechaRefB).getTime()) / 86400000) : null;
+    return { label: "Bloqueado", dot: "🚫", tono: "danger", categoria: "atrasado", diasAtraso: diasB, rango: calcularRangoAtraso(diasB) };
+  }
+
+  const plazo = Number(reglas?.dias_plazo ?? 15);
+  const avisoPrevio = Number(reglas?.dias_proximo_vencer ?? 3);
+  const fechaRef = ultimaActividad || cliente.creado_en;
+  const dias = fechaRef ? (Date.now() - new Date(fechaRef).getTime()) / 86400000 : 999;
+
+  if (dias >= plazo) {
+    const diasAtraso = Math.floor(dias - plazo);
+    return { label: "Vencido", dot: "🔴", tono: "danger", categoria: "atrasado", diasAtraso, rango: calcularRangoAtraso(diasAtraso) };
+  }
+  if (dias >= plazo - avisoPrevio) {
+    return { label: "Próximo a vencer", dot: "🟡", tono: "warn", categoria: "activo", diasAtraso: 0, rango: null };
+  }
+  return { label: "Al día", dot: "🟢", tono: "ok", categoria: "activo", diasAtraso: 0, rango: null };
+}
+
+// % de crédito nuevo disponible según lo ya abonado (si la regla está activa).
+function calcularCreditoDisponiblePct(totalOriginal, totalPagado, reglas = REGLAS_CREDITO_DEFAULT) {
+  if (!reglas?.credito_nuevo_segun_abonado || !(totalOriginal > 0)) return null;
+  return Math.max(0, Math.min(100, Math.round((totalPagado / totalOriginal) * 100)));
+}
+
+function ModalAccionesCliente({ cliente, estado, onCerrar, onAgregarFiado, onAbonar, onHistorial, onEditar, onEliminar, onCompartir, compartiendo, onAvisar, onClasificar, onBloquear }) {
   if (!cliente) return null;
   return (
     <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-40" onClick={onCerrar}>
       <div onClick={(e) => e.stopPropagation()} className="bg-white dark:bg-black rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-xs">
         <div className="font-semibold text-slate-800 dark:text-white mb-1 font-display truncate">{cliente.nombre}</div>
-        <div className="text-xs text-slate-400 dark:text-white/40 mb-4">Saldo pendiente: {formatMoneda(Number(cliente.saldo_pendiente).toFixed(2))}</div>
-        <div className="space-y-1.5">
+        <div className="text-xs text-slate-400 dark:text-white/40 mb-4">Saldo pendiente: {formatMoneda(Number(cliente.saldo_pendiente).toFixed(2))} {estado && <span className="ml-1">· {estado.dot} {estado.label}</span>}</div>
+        <div className="space-y-1.5 max-h-[60vh] overflow-y-auto">
           <button onClick={onAgregarFiado} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5">🧾 Agregar fiado</button>
           <button onClick={onAbonar} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5">➕ Registrar abono</button>
           <button onClick={onHistorial} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5">📋 Ver historial</button>
           {cliente.telefono ? (
-            <button onClick={onCompartir} disabled={compartiendo} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/10 flex items-center gap-2.5 disabled:opacity-50">
-              📤 {compartiendo ? "Preparando link..." : "Compartir por WhatsApp"}
-            </button>
+            <>
+              <button onClick={onAvisar} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5">🔔 Enviar aviso</button>
+              <button onClick={onCompartir} disabled={compartiendo} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/10 flex items-center gap-2.5 disabled:opacity-50">
+                📤 {compartiendo ? "Preparando link..." : "Compartir por WhatsApp"}
+              </button>
+            </>
           ) : (
-            <div className="px-3 py-2 text-[11px] text-slate-400 dark:text-white/40">Agregale un teléfono para poder compartirle su estado de cuenta.</div>
+            <div className="px-3 py-2 text-[11px] text-slate-400 dark:text-white/40">Agregale un teléfono para poder enviarle avisos o compartirle su estado de cuenta.</div>
           )}
+          <button onClick={onBloquear} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5">
+            {cliente.bloqueado ? "🔓 Desbloquear crédito" : "🚫 Bloquear crédito"}
+          </button>
+          <button onClick={onClasificar} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5">🏷️ Clasificar cuenta</button>
           <button onClick={onEditar} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5">✏️ Editar cliente</button>
           <button onClick={onEliminar} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/10 flex items-center gap-2.5">🗑️ Eliminar cliente</button>
         </div>
@@ -2067,11 +2164,12 @@ function ModalAccionesCliente({ cliente, onCerrar, onAgregarFiado, onAbonar, onH
   );
 }
 
-function TarjetaCliente({ cliente, totalPagado, ultimaActividad, onAbrirMenu, onAbonar }) {
+function TarjetaCliente({ cliente, estado, totalPagado, ultimaActividad, onAbrirMenu, onAbonar, reglasCredito }) {
   const saldo = Number(cliente.saldo_pendiente) || 0;
   const totalOriginal = saldo + totalPagado;
   const progreso = totalOriginal > 0 ? Math.min(100, Math.round((totalPagado / totalOriginal) * 100)) : 100;
-  const estado = calcularEstadoCliente(cliente, ultimaActividad);
+  const estadoFinal = estado || calcularEstadoCliente(cliente, ultimaActividad, reglasCredito);
+  const creditoDisponiblePct = calcularCreditoDisponiblePct(totalOriginal, totalPagado, reglasCredito);
 
   return (
     <div className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-white/10 rounded-2xl p-4 flex flex-col gap-3">
@@ -2080,8 +2178,9 @@ function TarjetaCliente({ cliente, totalPagado, ultimaActividad, onAbrirMenu, on
           <div className="font-semibold text-slate-800 dark:text-white truncate">{cliente.nombre}</div>
           {cliente.telefono && <div className="text-xs text-slate-400 dark:text-white/40">{cliente.telefono}</div>}
         </div>
-        <span className="text-[11px] font-medium flex items-center gap-1 shrink-0 text-slate-500 dark:text-white/60">{estado.dot} {estado.label}</span>
+        <span className="text-[11px] font-medium flex items-center gap-1 shrink-0 text-slate-500 dark:text-white/60">{estadoFinal.dot} {estadoFinal.label}</span>
       </button>
+      {estadoFinal.rango && <div className="text-[10px] font-medium text-rose-500 -mt-2">Atraso: {estadoFinal.rango}</div>}
       <div>
         <div className="text-[11px] text-slate-400 dark:text-white/40 uppercase tracking-wide">Saldo pendiente</div>
         <div className="text-2xl font-bold font-mono text-slate-800 dark:text-white">{formatMoneda(saldo.toFixed(2))}</div>
@@ -2090,11 +2189,80 @@ function TarjetaCliente({ cliente, totalPagado, ultimaActividad, onAbrirMenu, on
         <div className="w-full h-1.5 bg-slate-100 dark:bg-white/10 rounded-full overflow-hidden">
           <div className="h-full bg-[#E3A73B] rounded-full transition-all" style={{ width: `${progreso}%` }} />
         </div>
-        <div className="text-[10px] text-slate-400 dark:text-white/40 mt-1">{progreso}% pagado</div>
+        <div className="text-[10px] text-slate-400 dark:text-white/40 mt-1">
+          {progreso}% pagado{creditoDisponiblePct != null && ` · Crédito nuevo disponible: ${creditoDisponiblePct}%`}
+        </div>
       </div>
       <div className="flex gap-2 mt-1">
         <button onClick={onAbonar} className="flex-1 text-xs font-semibold bg-[#16233D] text-white rounded-lg py-2 hover:brightness-110">➕ Abono</button>
         <button onClick={onAbrirMenu} className="text-xs px-3 rounded-lg border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white/80 hover:bg-slate-50 dark:hover:bg-white/5">⋯ Más</button>
+      </div>
+    </div>
+  );
+}
+
+// --- Enviar aviso: arma el mensaje con datos reales del cliente y abre WhatsApp con el texto listo.
+// Nunca "envía" nada por sí solo — si no hay teléfono o el usuario cierra WhatsApp sin mandar, no se finge un envío.
+function ModalAviso({ abierto, cliente, reglasCredito, ultimaActividad, onEnviar, onCerrar }) {
+  const [tipo, setTipo] = useState("recordatorio_abono");
+  useEffect(() => { if (abierto) setTipo("recordatorio_abono"); }, [abierto, cliente]);
+  if (!abierto || !cliente) return null;
+
+  const saldo = Number(cliente.saldo_pendiente) || 0;
+  const estado = calcularEstadoCliente(cliente, ultimaActividad, reglasCredito);
+  const diasTexto = estado.diasAtraso ? `${estado.diasAtraso} día(s)` : null;
+
+  const TIPOS = {
+    proximo_vencer: { label: "🔔 Crédito próximo a vencer", texto: `Hola ${cliente.nombre}! Te recordamos que tu crédito está próximo a vencer. Saldo pendiente: ${formatMoneda(saldo.toFixed(2))}. ¡Gracias por tu confianza!` },
+    recordatorio_abono: { label: "💰 Recordatorio de abono", texto: `Hola ${cliente.nombre}! Este es un recordatorio de tu saldo pendiente: ${formatMoneda(saldo.toFixed(2))}. Cuando puedas, pasá a abonar. ¡Gracias!` },
+    vencido: { label: "📅 Crédito vencido", texto: `Hola ${cliente.nombre}, tu crédito está vencido${diasTexto ? ` hace ${diasTexto}` : ""}. Saldo pendiente: ${formatMoneda(saldo.toFixed(2))}. Por favor comunicate con nosotros.` },
+    bloqueado: { label: "🚫 Crédito bloqueado", texto: `Hola ${cliente.nombre}, tu crédito quedó bloqueado por el atraso en los pagos. Saldo pendiente: ${formatMoneda(saldo.toFixed(2))}. Escribinos para regularizarlo.` },
+    desbloqueado: { label: "🔓 Crédito desbloqueado", texto: `Hola ${cliente.nombre}! Tu crédito fue desbloqueado. ¡Gracias por ponerte al día!` },
+    abono_registrado: { label: "✅ Abono registrado", texto: `Hola ${cliente.nombre}, registramos tu abono. Saldo pendiente actual: ${formatMoneda(saldo.toFixed(2))}. ¡Gracias!` },
+    saldo_pendiente: { label: "💳 Recordatorio de saldo", texto: `Hola ${cliente.nombre}, tu saldo pendiente con nosotros es de ${formatMoneda(saldo.toFixed(2))}.` },
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50" onClick={onCerrar}>
+      <div onClick={(e) => e.stopPropagation()} className="bg-white dark:bg-black rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-sm">
+        <div className="font-semibold text-slate-800 dark:text-white mb-3 font-display">Enviar aviso a {cliente.nombre}</div>
+        <div className="space-y-1.5 mb-3">
+          {Object.entries(TIPOS).map(([id, t]) => (
+            <button key={id} onClick={() => setTipo(id)}
+              className={`w-full text-left px-3 py-2.5 rounded-lg text-sm font-medium border ${tipo === id ? "border-[#E3A73B] bg-amber-50 dark:bg-amber-900/10 text-slate-800 dark:text-white" : "border-slate-200 dark:border-white/10 text-slate-600 dark:text-white/70 hover:bg-slate-50 dark:hover:bg-white/5"}`}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <div className="text-xs text-slate-500 dark:text-white/60 bg-slate-50 dark:bg-white/5 rounded-lg p-3 mb-3 whitespace-pre-wrap">{TIPOS[tipo].texto}</div>
+        <p className="text-[11px] text-slate-400 dark:text-white/40 mb-3">Esto abre WhatsApp con el mensaje listo — vos lo enviás desde ahí. Si no hay internet, quedará preparado para cuando puedas mandarlo.</p>
+        <button onClick={() => onEnviar(cliente, TIPOS[tipo].label, TIPOS[tipo].texto)} className="w-full px-3 py-2.5 rounded-lg text-sm font-semibold bg-[#16233D] text-white hover:brightness-110 mb-2">📤 Preparar y abrir WhatsApp</button>
+        <button onClick={onCerrar} className="w-full px-3 py-2.5 rounded-lg text-sm font-medium border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white">Cancelar</button>
+      </div>
+    </div>
+  );
+}
+
+// --- Clasificar cuenta: marcar como deuda antigua (manual, nunca automático) o como recuperada; o quitarle la marca.
+function ModalClasificarCliente({ abierto, cliente, guardando, onGuardar, onCerrar }) {
+  const [notas, setNotas] = useState("");
+  useEffect(() => { if (abierto) setNotas(cliente?.notas_admin || ""); }, [abierto, cliente]);
+  if (!abierto || !cliente) return null;
+  const saldo = Number(cliente.saldo_pendiente) || 0;
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50" onClick={onCerrar}>
+      <div onClick={(e) => e.stopPropagation()} className="bg-white dark:bg-black rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-sm">
+        <div className="font-semibold text-slate-800 dark:text-white mb-1 font-display">Clasificar a {cliente.nombre}</div>
+        <div className="text-xs text-slate-400 dark:text-white/40 mb-4">Saldo pendiente: {formatMoneda(saldo.toFixed(2))}. Clasificar no borra ni modifica el saldo ni el historial — solo lo agrupa para vos.</div>
+        <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Notas del administrador (opcional)</label>
+        <textarea value={notas} onChange={(e) => setNotas(e.target.value)} rows={3} placeholder="Ej: cliente se mudó, difícil de contactar..."
+          className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B] mb-3" />
+        <div className="space-y-1.5">
+          <button disabled={guardando} onClick={() => onGuardar(cliente, "deuda_antigua", notas)} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/10 disabled:opacity-50">🔴 Marcar como deuda antigua / difícil de recuperar</button>
+          {saldo <= 0 && <button disabled={guardando} onClick={() => onGuardar(cliente, "recuperado", notas)} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/10 disabled:opacity-50">✅ Marcar como recuperada</button>}
+          {cliente.categoria_manual && <button disabled={guardando} onClick={() => onGuardar(cliente, null, notas)} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-600 dark:text-white/80 hover:bg-slate-50 dark:hover:bg-white/5 disabled:opacity-50">↩️ Quitar clasificación manual</button>}
+        </div>
+        <button onClick={onCerrar} className="w-full mt-3 px-3 py-2.5 rounded-lg text-sm font-medium border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white">Cerrar</button>
       </div>
     </div>
   );
@@ -2219,8 +2387,11 @@ function ModalEditarFiado({ fiado, productos, onGuardar, onCerrar, guardando }) 
   );
 }
 
+const ICONOS_HISTORIAL = { aviso: "🔔", cambio_estado: "🔒", comision: "💸", clasificacion: "🏷️" };
+
 function ModalHistorialCliente({ abierto, cliente, pagos, onCerrar, onEditarFiado, onEliminarFiado }) {
   const [fiados, setFiados] = useState([]);
+  const [historial, setHistorial] = useState([]);
   const [cargando, setCargando] = useState(false);
   const [fiadoEditando, setFiadoEditando] = useState(null);
   const [guardando, setGuardando] = useState(false);
@@ -2228,9 +2399,12 @@ function ModalHistorialCliente({ abierto, cliente, pagos, onCerrar, onEditarFiad
   const recargar = useCallback(() => {
     if (!cliente) return;
     setCargando(true);
-    obtenerConRespaldo(`fiados_cliente_${cliente.id}`, () => supaApi.listarFiadosCliente(cliente.id))
-      .then(({ datos, offline }) => { setFiados(datos); if (offline) notificarConexion("sin_conexion"); })
-      .catch(() => setFiados([]))
+    Promise.all([
+      obtenerConRespaldo(`fiados_cliente_${cliente.id}`, () => supaApi.listarFiadosCliente(cliente.id)),
+      obtenerConRespaldo(`historial_cliente_${cliente.id}`, () => supaApi.listarHistorialCliente(cliente.id)).catch(() => ({ datos: [], offline: false })),
+    ])
+      .then(([{ datos, offline }, historialRes]) => { setFiados(datos); setHistorial(historialRes.datos || []); if (offline) notificarConexion("sin_conexion"); })
+      .catch(() => { setFiados([]); setHistorial([]); })
       .finally(() => setCargando(false));
   }, [cliente]);
 
@@ -2296,6 +2470,22 @@ function ModalHistorialCliente({ abierto, cliente, pagos, onCerrar, onEditarFiad
             </div>
           ))}
           {pagosCliente.length === 0 && <p className="text-sm text-slate-400 py-2">Sin pagos registrados.</p>}
+        </div>
+
+        <h3 className="text-xs font-semibold text-slate-500 dark:text-white/60 uppercase tracking-wide mt-5 mb-2">Avisos y cambios de estado</h3>
+        <div className="space-y-2">
+          {historial.map(h => (
+            <div key={h.id} className="bg-slate-50 dark:bg-neutral-900 rounded-lg p-3 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="font-medium text-slate-700 dark:text-white">{ICONOS_HISTORIAL[h.tipo] || "•"} {h.detalle}</span>
+              </div>
+              <div className="flex items-center justify-between text-xs text-slate-400 dark:text-white/40 mt-1">
+                <span>Saldo en ese momento: {h.saldo_en_momento != null ? formatMoneda(Number(h.saldo_en_momento).toFixed(2)) : "—"}</span>
+                <span>{new Date(h.creado_en).toLocaleString()}</span>
+              </div>
+            </div>
+          ))}
+          {historial.length === 0 && <p className="text-sm text-slate-400 py-2">Sin avisos ni cambios registrados todavía.</p>}
         </div>
 
         <div className="flex justify-end mt-5">
@@ -2691,8 +2881,9 @@ function ModalNuevoFiado({ abierto, clientes, productos, clientePreseleccionado,
   );
 }
 
-function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, error, onRecargar, onCrearCliente, onActualizarCliente, onEliminarCliente, onCrearFiado, onRegistrarPago, onEditarFiado, onEliminarFiado }) {
+function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, error, onRecargar, onCrearCliente, onActualizarCliente, onEliminarCliente, onCrearFiado, onRegistrarPago, onEditarFiado, onEliminarFiado, reglasCredito, onAplicarComision, onRegistrarHistorial }) {
   const [busqueda, setBusqueda] = useState("");
+  const [filtro, setFiltro] = useState("todos"); // todos | activo | atrasado | deuda_antigua | recuperado
   const [modalCliente, setModalCliente] = useState(false);
   const [clienteEditando, setClienteEditando] = useState(null);
   const [modalFiado, setModalFiado] = useState(false);
@@ -2703,6 +2894,8 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
   const [clienteMenu, setClienteMenu] = useState(null);
   const [clienteParaFiado, setClienteParaFiado] = useState(null);
   const [compartiendoId, setCompartiendoId] = useState(null);
+  const [clienteAviso, setClienteAviso] = useState(null);
+  const [clienteClasificar, setClienteClasificar] = useState(null);
 
   const compartirCliente = async (cliente) => {
     setCompartiendoId(cliente.id);
@@ -2726,14 +2919,56 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
     }
   });
 
-  const clientesFiltrados = clientes.filter(c => c.nombre.toLowerCase().includes(busqueda.toLowerCase()));
+  // Cada cliente con su estado ya calculado (categoría activo/atrasado/deuda_antigua/recuperado, rango de días, etc.)
+  const clientesConEstado = clientes.map(c => ({ ...c, _estado: calcularEstadoCliente(c, ultimaPorCliente[c.id], reglasCredito) }));
+
+  const clientesFiltrados = clientesConEstado.filter(c => {
+    const texto = busqueda.trim().toLowerCase();
+    const coincideTexto = !texto || c.nombre.toLowerCase().includes(texto) || (c.telefono || "").includes(texto);
+    const coincideFiltro = filtro === "todos" || c._estado.categoria === filtro;
+    return coincideTexto && coincideFiltro;
+  });
+
   const totalPorCobrar = clientes.reduce((a, c) => a + (Number(c.saldo_pendiente) || 0), 0);
   const clientesPendientes = clientes.filter(c => Number(c.saldo_pendiente) > 0).length;
+  const clientesActivos = clientesConEstado.filter(c => c._estado.categoria === "activo").length;
+  const clientesAtrasados = clientesConEstado.filter(c => c._estado.categoria === "atrasado").length;
+  const clientesDeudaAntigua = clientesConEstado.filter(c => c._estado.categoria === "deuda_antigua").length;
   const ahora = new Date();
   const recuperadoMes = pagosFiado.filter(p => {
     const f = new Date(p.creado_en);
     return f.getFullYear() === ahora.getFullYear() && f.getMonth() === ahora.getMonth();
   }).reduce((a, p) => a + Number(p.monto), 0);
+
+  const FILTROS = [
+    { id: "todos", label: "Todos" },
+    { id: "activo", label: "🟢 Activos" },
+    { id: "atrasado", label: "🟡 Atrasados" },
+    { id: "deuda_antigua", label: "🔴 Deuda antigua" },
+    { id: "recuperado", label: "✅ Recuperados" },
+  ];
+
+  const enviarAviso = async (cliente, tipo, mensaje) => {
+    const telefonoLimpio = (cliente.telefono || "").replace(/[^0-9]/g, "");
+    if (telefonoLimpio) window.open(`https://wa.me/${telefonoLimpio}?text=${encodeURIComponent(mensaje)}`, "_blank");
+    await onRegistrarHistorial(cliente.id, "aviso", `${tipo}: ${mensaje}`, Number(cliente.saldo_pendiente) || 0);
+    setClienteAviso(null);
+  };
+
+  const clasificarCliente = async (cliente, categoria, notas) => {
+    setGuardando(true);
+    try {
+      const cambios = categoria === "deuda_antigua"
+        ? { categoria_manual: "deuda_antigua", notas_admin: notas || cliente.notas_admin || "", fecha_clasificado_antigua: new Date().toISOString() }
+        : categoria === "recuperado"
+        ? { categoria_manual: "recuperado", fecha_recuperado: new Date().toISOString() }
+        : { categoria_manual: null };
+      await onActualizarCliente(cliente.id, cambios);
+      await onRegistrarHistorial(cliente.id, "clasificacion", `Clasificado como: ${categoria || "sin categoría manual"}`, Number(cliente.saldo_pendiente) || 0);
+      setClienteClasificar(null);
+    } catch (e) { mostrarError(e.message); }
+    finally { setGuardando(false); }
+  };
 
   const guardarCliente = async (form) => {
     setGuardando(true);
@@ -2784,16 +3019,27 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-5">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
         <StatCard label="Total por cobrar" value={`${formatMoneda(totalPorCobrar.toFixed(2))}`} icon={IconCard} accent="bg-[#16233D]" />
-        <StatCard label="Clientes pendientes" value={clientesPendientes} icon={IconUsers} accent="bg-amber-500" />
-        <StatCard label="Recuperado este mes" value={`${formatMoneda(recuperadoMes.toFixed(2))}`} icon={IconWallet} accent="bg-emerald-600" />
+        <StatCard label="🟢 Activos" value={clientesActivos} icon={IconUsers} accent="bg-emerald-500" />
+        <StatCard label="🟡 Atrasados" value={clientesAtrasados} icon={IconUsers} accent="bg-amber-500" />
+        <StatCard label="🔴 Deuda antigua" value={clientesDeudaAntigua} icon={IconUsers} accent="bg-rose-500" />
+        <StatCard label="✅ Recuperado este mes" value={`${formatMoneda(recuperadoMes.toFixed(2))}`} icon={IconWallet} accent="bg-emerald-600" />
       </div>
 
       {error && <div className="bg-rose-50 dark:bg-rose-900/10 border border-rose-200 dark:border-rose-900/30 text-rose-600 dark:text-rose-400 text-sm rounded-lg p-3 mb-4">{error}</div>}
 
-      <input value={busqueda} onChange={(e) => setBusqueda(e.target.value)} placeholder="Buscar cliente..."
-        className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B] mb-4" />
+      <input value={busqueda} onChange={(e) => setBusqueda(e.target.value)} placeholder="Buscar por nombre o teléfono..."
+        className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B] mb-3" />
+
+      <div className="flex gap-2 overflow-x-auto pb-1 mb-4">
+        {FILTROS.map(f => (
+          <button key={f.id} onClick={() => setFiltro(f.id)}
+            className={`shrink-0 text-xs font-semibold px-3 py-2 rounded-lg border ${filtro === f.id ? "bg-[#16233D] text-white border-[#16233D]" : "border-slate-200 dark:border-white/10 text-slate-600 dark:text-white/80 hover:bg-slate-50 dark:hover:bg-white/5"}`}>
+            {f.label}
+          </button>
+        ))}
+      </div>
 
       {cargando ? (
         <p className="text-sm text-slate-400 py-6 text-center">Cargando clientes...</p>
@@ -2802,25 +3048,31 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {clientesFiltrados.map(c => (
-            <TarjetaCliente key={c.id} cliente={c} totalPagado={pagosPorCliente[c.id] || 0} ultimaActividad={ultimaPorCliente[c.id]}
+            <TarjetaCliente key={c.id} cliente={c} estado={c._estado} totalPagado={pagosPorCliente[c.id] || 0} ultimaActividad={ultimaPorCliente[c.id]} reglasCredito={reglasCredito}
               onAbonar={() => setClienteAbono(c)} onAbrirMenu={() => setClienteMenu(c)} />
           ))}
         </div>
       )}
 
-      <ModalAccionesCliente cliente={clienteMenu} onCerrar={() => setClienteMenu(null)}
+      <ModalAccionesCliente cliente={clienteMenu} estado={clienteMenu ? calcularEstadoCliente(clienteMenu, ultimaPorCliente[clienteMenu.id], reglasCredito) : null} onCerrar={() => setClienteMenu(null)}
         onAgregarFiado={() => { setClienteParaFiado(clienteMenu); setModalFiado(true); setClienteMenu(null); }}
         onAbonar={() => { setClienteAbono(clienteMenu); setClienteMenu(null); }}
         onHistorial={() => { setClienteHistorial(clienteMenu); setClienteMenu(null); }}
         onEditar={() => { setClienteEditando(clienteMenu); setModalCliente(true); setClienteMenu(null); }}
         onCompartir={() => compartirCliente(clienteMenu)}
         compartiendo={compartiendoId === clienteMenu?.id}
+        onAvisar={() => { setClienteAviso(clienteMenu); setClienteMenu(null); }}
+        onClasificar={() => { setClienteClasificar(clienteMenu); setClienteMenu(null); }}
+        onBloquear={async () => { const c = clienteMenu; setClienteMenu(null); await onActualizarCliente(c.id, { bloqueado: !c.bloqueado, fecha_bloqueo: !c.bloqueado ? new Date().toISOString() : c.fecha_bloqueo, fecha_desbloqueo: c.bloqueado ? new Date().toISOString() : null }); await onRegistrarHistorial(c.id, "cambio_estado", c.bloqueado ? "Desbloqueado manualmente" : "Bloqueado manualmente", Number(c.saldo_pendiente) || 0); }}
         onEliminar={() => { const c = clienteMenu; setClienteMenu(null); eliminarCliente(c); }} />
 
       <ModalCliente abierto={modalCliente} cliente={clienteEditando} guardando={guardando} onGuardar={guardarCliente} onCerrar={() => { setModalCliente(false); setClienteEditando(null); }} />
       <ModalNuevoFiado abierto={modalFiado} clientes={clientes} productos={productos} clientePreseleccionado={clienteParaFiado} guardando={guardando} onGuardar={guardarFiado} onCerrar={() => { setModalFiado(false); setClienteParaFiado(null); }} />
       <ModalAbono abierto={!!clienteAbono} cliente={clienteAbono} guardando={guardando} onGuardar={guardarAbono} onCerrar={() => setClienteAbono(null)} />
       <ModalHistorialCliente abierto={!!clienteHistorial} cliente={clienteHistorial} pagos={pagosFiado} onCerrar={() => setClienteHistorial(null)} onEditarFiado={onEditarFiado} onEliminarFiado={onEliminarFiado} />
+      <ModalAviso abierto={!!clienteAviso} cliente={clienteAviso} reglasCredito={reglasCredito} ultimaActividad={clienteAviso ? ultimaPorCliente[clienteAviso.id] : null}
+        onEnviar={enviarAviso} onCerrar={() => setClienteAviso(null)} />
+      <ModalClasificarCliente abierto={!!clienteClasificar} cliente={clienteClasificar} guardando={guardando} onGuardar={clasificarCliente} onCerrar={() => setClienteClasificar(null)} />
     </div>
   );
 }
@@ -5614,17 +5866,7 @@ function PaginaCuentaPublica({ token }) {
       try {
         const reg = await navigator.serviceWorker.register("./sw.js");
         const sub = await reg.pushManager.getSubscription();
-        if (sub) {
-          // Ya existía una suscripción guardada en este navegador (puede
-          // ser de una prueba anterior, o de probar todo desde el mismo
-          // celular). Igual hay que confirmar que el servidor la tenga —
-          // si no, se ve "activado" en pantalla pero nunca llegó a
-          // guardarse del otro lado, y no llegaría ninguna notificación.
-          try { await guardarSuscripcionPublica(token, sub); setNotif("activo"); }
-          catch (e) { setNotif("inactivo"); }
-        } else {
-          setNotif("inactivo");
-        }
+        setNotif(sub ? "activo" : "inactivo");
       } catch (e) { setNotif("inactivo"); }
     })();
   }, []);
@@ -5833,13 +6075,14 @@ function AppInterna({ sesion, onCerrarSesion }) {
     return email ? email.split("@")[0] : "";
   });
   const [fotoPerfil, setFotoPerfil] = useState(null);
+  const [reglasCredito, setReglasCredito] = useState(REGLAS_CREDITO_DEFAULT);
   const cargaInicialRef = React.useRef(false);
 
   useEffect(() => {
     (async () => {
       try {
         const [config, perfil] = await Promise.all([supaApi.obtenerConfigNegocio(), supaApi.obtenerMiPerfil()]);
-        if (config) { setNombreNegocio(config.nombre || ""); setLogo(config.logo || null); establecerMonedaActual(config.moneda_codigo); setMoneda(monedaActualCache); }
+        if (config) { setNombreNegocio(config.nombre || ""); setLogo(config.logo || null); establecerMonedaActual(config.moneda_codigo); setMoneda(monedaActualCache); if (config.reglas_credito) setReglasCredito({ ...REGLAS_CREDITO_DEFAULT, ...config.reglas_credito }); }
         if (perfil) {
           if (perfil.nombre) setNombreUsuario(perfil.nombre);
           setFotoPerfil(perfil.foto || null);
@@ -6085,6 +6328,55 @@ function AppInterna({ sesion, onCerrarSesion }) {
       }
     );
     if (resultado !== null) await cargarCuentasPorCobrar();
+  };
+
+  // Reglas de crédito (plazo, aviso previo, % comisión, si el crédito nuevo depende de lo abonado).
+  // Configurables: nunca quedan fijas en el código, y se guardan en negocio_config.
+  const handleActualizarReglasCredito = async (nuevasReglas) => {
+    const combinadas = { ...reglasCredito, ...nuevasReglas };
+    setReglasCredito(combinadas);
+    await conAlternativaOffline(
+      () => supaApi.guardarConfigNegocio({ reglas_credito: combinadas }),
+      "guardar_config_negocio", { reglas_credito: combinadas },
+      async () => {}
+    );
+  };
+
+  // Comisión por atraso: siempre manual, cliente por cliente. Nunca se aplica sola.
+  const handleAplicarComision = async (cliente, porcentaje) => {
+    const saldoAntes = Number(cliente.saldo_pendiente) || 0;
+    const monto = Math.round((saldoAntes * (Number(porcentaje) || 0)) / 100 * 100) / 100;
+    const saldoDespues = saldoAntes + monto;
+    const resultado = await conAlternativaOffline(
+      () => supaApi.actualizarCliente(cliente.id, { saldo_pendiente: saldoDespues }),
+      "actualizar_cliente", { id: cliente.id, cambios: { saldo_pendiente: saldoDespues } },
+      async () => {
+        const actuales = (await cacheLeer("clientes")) || clientes;
+        const actualizados = actuales.map(c => c.id === cliente.id ? { ...c, saldo_pendiente: saldoDespues } : c);
+        await cacheGuardar("clientes", actualizados);
+        setClientes(actualizados);
+      }
+    );
+    await conAlternativaOffline(
+      () => supaApi.crearComisionFiado({ cliente_id: cliente.id, porcentaje, monto, saldo_antes: saldoAntes, saldo_despues: saldoDespues }),
+      "crear_comision", { cliente_id: cliente.id, porcentaje, monto, saldo_antes: saldoAntes, saldo_despues: saldoDespues },
+      async () => {}
+    );
+    await conAlternativaOffline(
+      () => supaApi.crearHistorialCredito({ cliente_id: cliente.id, tipo: "comision", detalle: `Comisión ${porcentaje}% aplicada por atraso`, saldo_en_momento: saldoDespues }),
+      "crear_historial", { cliente_id: cliente.id, tipo: "comision", detalle: `Comisión ${porcentaje}% aplicada por atraso`, saldo_en_momento: saldoDespues },
+      async () => {}
+    );
+    if (resultado !== null) await cargarCuentasPorCobrar();
+  };
+
+  // Registrar en el historial un aviso preparado (y, si corresponde, un cambio de estado manual como bloquear/desbloquear).
+  const handleRegistrarHistorialCredito = async (clienteId, tipo, detalle, saldoEnMomento) => {
+    await conAlternativaOffline(
+      () => supaApi.crearHistorialCredito({ cliente_id: clienteId, tipo, detalle, saldo_en_momento: saldoEnMomento }),
+      "crear_historial", { cliente_id: clienteId, tipo, detalle, saldo_en_momento: saldoEnMomento },
+      async () => {}
+    );
   };
 
   const [faltantes, setFaltantes] = useState([]);
@@ -6466,7 +6758,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
     perdidas: <PaginaPerdidas productos={productos} onActualizarProducto={handleActualizar} onRecargarProductos={cargarProductos} />,
     historial: <PaginaHistorial productos={productos} onActualizarProducto={handleActualizar} onRecargarProductos={cargarProductos} filtroInicial={historialFiltroInicial} />,
     estadisticas: <PaginaEstadisticas consumoHogar={consumoHogar} onVerVentas={irAHistorialVentas} />,
-    cuentas: <PaginaCuentasPorCobrar clientes={clientes} pagosFiado={pagosFiado} productos={productos} cargando={cargandoCuentas} error={errorCuentas} onRecargar={cargarCuentasPorCobrar} onCrearCliente={handleCrearCliente} onActualizarCliente={handleActualizarCliente} onEliminarCliente={handleEliminarCliente} onCrearFiado={handleCrearFiado} onRegistrarPago={handleRegistrarPago} onEditarFiado={handleEditarFiado} onEliminarFiado={handleEliminarFiado} />,
+    cuentas: <PaginaCuentasPorCobrar clientes={clientes} pagosFiado={pagosFiado} productos={productos} cargando={cargandoCuentas} error={errorCuentas} onRecargar={cargarCuentasPorCobrar} onCrearCliente={handleCrearCliente} onActualizarCliente={handleActualizarCliente} onEliminarCliente={handleEliminarCliente} onCrearFiado={handleCrearFiado} onRegistrarPago={handleRegistrarPago} onEditarFiado={handleEditarFiado} onEliminarFiado={handleEliminarFiado} reglasCredito={reglasCredito} onAplicarComision={handleAplicarComision} onRegistrarHistorial={handleRegistrarHistorialCredito} />,
     consumo: <PaginaConsumoHogar productos={productos} registros={consumoHogar} cargando={cargandoConsumo} error={errorConsumo} onRegistrar={handleRegistrarConsumo} onEliminar={handleEliminarConsumo} />,
     produccion: <PaginaProduccion productos={productos} lotes={lotes} cargando={cargandoLotes} error={errorLotes} onIniciar={handleIniciarLote} onAgregarIngrediente={handleAgregarIngredienteLote} onFinalizar={handleFinalizarLote} onEliminar={handleEliminarLote} />,
     notas: <PaginaNotas notas={notas} cargando={cargandoNotas} error={errorNotas} onCrear={handleCrearNota} onActualizar={handleActualizarNota} onEliminar={handleEliminarNota} />,
