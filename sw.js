@@ -1,18 +1,23 @@
 // Service Worker de Nova.
-// Tiene dos trabajos:
-// 1) Guardar una copia de la aplicación (HTML, React, Tailwind, fuentes)
-//    la primera vez que se abre con internet, para poder ABRIR Nova aunque
-//    no haya señal (esto es lo que faltaba: los datos ya funcionaban
-//    offline, pero la app en sí necesitaba internet para siquiera cargar).
+//
+// IMPORTANTE sobre la estrategia de caché (para el propio Claude, si esto
+// se vuelve a tocar en el futuro):
+// - El HTML de la app (index.html / "/") usa "red primero": siempre intenta
+//   traer la versión más nueva del servidor, y solo si no hay conexión usa
+//   la última copia guardada. Así, cada vez que Claude publique un cambio,
+//   el negocio lo ve apenas tenga señal -- nunca se queda pegado en una
+//   versión vieja para siempre (ese fue un bug real que causó horas de
+//   confusión: parecía que los arreglos "no llegaban").
+// - Las librerías (React, Tailwind, Chart.js, fuentes) sí usan "caché
+//   primero", porque esas casi no cambian y así la app abre más rápido.
+//
+// Dos trabajos en total:
+// 1) Guardar una copia de la app para poder ABRIRLA sin internet.
 // 2) Mostrar las notificaciones push a los clientes con fiado.
 
-const CACHE_NAME = "nova-shell-v2";
+const CACHE_NAME = "nova-shell-v3";
 const SUPABASE_HOST = "fgfobmrhgcztvjaagxvu.supabase.co";
-
-const APP_SHELL = [
-  "./",
-  "./index.html",
-  "./manifest.json",
+const RECURSOS_LIBRERIAS = [
   "https://cdn.tailwindcss.com",
   "https://unpkg.com/react@18.3.1/umd/react.production.min.js",
   "https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js",
@@ -24,10 +29,12 @@ const APP_SHELL = [
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) =>
-      // Cada archivo se guarda por separado (no todo junto) para que si
-      // uno falla (ej. una fuente), no arruine el resto -- lo importante,
-      // el index.html, siempre queda guardado.
-      Promise.all(APP_SHELL.map((url) => cache.add(url).catch(() => {})))
+      Promise.all([
+        cache.add("./").catch(() => {}),
+        cache.add("./index.html").catch(() => {}),
+        cache.add("./manifest.json").catch(() => {}),
+        ...RECURSOS_LIBRERIAS.map((url) => cache.add(url).catch(() => {})),
+      ])
     )
   );
   self.skipWaiting();
@@ -46,11 +53,33 @@ self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
 
   const url = new URL(event.request.url);
-  // Las llamadas a la base de datos (Supabase) NUNCA se sirven desde acá --
-  // eso ya lo maneja el propio código de Nova con su sistema de guardado
-  // local. Este service worker solo se encarga de que la APP pueda abrir.
+
+  // La base de datos nunca pasa por acá -- eso ya lo maneja el propio
+  // código de Nova con su sistema de guardado local.
   if (url.hostname.includes(SUPABASE_HOST)) return;
 
+  const esNavegacion = event.request.mode === "navigate";
+  const esElHtmlPrincipal = esNavegacion || url.pathname === "/" || url.pathname.endsWith("/index.html");
+
+  if (esElHtmlPrincipal) {
+    // RED PRIMERO: siempre busca la versión más nueva. Solo si no hay
+    // conexión (o el servidor no contesta) usa la última copia guardada.
+    event.respondWith(
+      fetch(event.request)
+        .then((respuesta) => {
+          if (respuesta && respuesta.status === 200) {
+            const copia = respuesta.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copia)).catch(() => {});
+          }
+          return respuesta;
+        })
+        .catch(() => caches.match(event.request).then((c) => c || caches.match("./")))
+    );
+    return;
+  }
+
+  // Todo lo demás (librerías, fuentes): caché primero, y se actualiza
+  // solo en segundo plano -- no cambian seguido, priorizamos velocidad.
   event.respondWith(
     caches.match(event.request).then((cacheado) => {
       const desdeRed = fetch(event.request)
@@ -62,8 +91,6 @@ self.addEventListener("fetch", (event) => {
           return respuesta;
         })
         .catch(() => cacheado);
-      // Si ya hay copia guardada, se muestra al toque (rápido) y de paso se
-      // actualiza en segundo plano; si no hay copia, se espera a la red.
       return cacheado || desdeRed;
     })
   );
