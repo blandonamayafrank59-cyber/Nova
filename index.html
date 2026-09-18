@@ -638,6 +638,40 @@ async function guardarSuscripcionPublica(token, subscription) {
   if (!res.ok) throw new Error("No se pudo activar la notificación");
 }
 
+// Trae los mensajes que el negocio le mandó a este cliente (sin sesión,
+// validado por su token). El propio SQL filtra por token, así que un
+// cliente nunca puede ver mensajes de otro.
+async function obtenerMensajesPublicos(token) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/mensajes_publicos`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+    body: JSON.stringify({ p_token: token }),
+  });
+  if (!res.ok) throw new Error("No se pudieron cargar los mensajes");
+  return res.json();
+}
+// Marca un mensaje como leído DE VERDAD (acción explícita del cliente, no
+// solo porque le llegó la notificación). Detiene sus recordatorios.
+async function marcarMensajeLeidoPublico(token, mensajeId) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/marcar_mensaje_leido_publico`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+    body: JSON.stringify({ p_token: token, p_mensaje_id: mensajeId }),
+  });
+  if (!res.ok) throw new Error("No se pudo marcar como leído");
+  return res.json();
+}
+// Apaga las notificaciones de este cliente: borra la suscripción tanto del
+// navegador como del servidor, para que ya no se le vuelva a mandar nada.
+async function eliminarSuscripcionPublica(token, endpoint) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/eliminar_suscripcion_push_publico`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+    body: JSON.stringify({ p_token: token, p_endpoint: endpoint }),
+  });
+  if (!res.ok) throw new Error("No se pudo desactivar la notificación");
+}
+
 // Dispara la notificación push al cliente (si activó notificaciones). Se
 // llama "en segundo plano": si falla, no debe interrumpir ni bloquear la
 // venta/abono, que ya se guardó bien de todos modos — pero sí avisa con un
@@ -652,6 +686,17 @@ function notificarCliente(clienteId, tipo) {
     else if (d.enviadas === 0) { mostrarAviso("[debug notificación] no había ninguna suscripción activa para este cliente"); }
     else { mostrarAviso(`[debug notificación] enviada (${d.enviadas})`); }
   }).catch((e) => { mostrarAviso(`[debug notificación] fallo de red: ${e.message}`); });
+}
+
+// Dispara el push de un mensaje directo ya guardado (id de la tabla
+// mensajes_clientes). Se llama "en segundo plano": si falla, el mensaje ya
+// quedó guardado igual y el recordatorio automático del servidor lo va a
+// reintentar más adelante, así que no hace falta bloquear ni avisar aquí.
+function notificarMensajeCliente(mensajeId) {
+  peticionApi(`${SUPABASE_URL}/functions/v1/enviar-notificacion-push`, {
+    method: "POST",
+    body: JSON.stringify({ mensaje_id: mensajeId, origen: window.location.origin }),
+  }).catch(() => {});
 }
 
 async function obtenerMiNegocioId() {
@@ -949,6 +994,47 @@ const supaApi = {
     });
     if (!res2.ok) throw new Error("No se pudo generar el link del cliente");
     return nuevoToken;
+  },
+
+  // --- Mensajes directos a clientes (bloqueo de crédito, recordatorios, etc.) ---
+  async listarMensajesCliente(clienteId) {
+    const negocioId = await obtenerMiNegocioId();
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/mensajes_clientes?cliente_id=eq.${clienteId}&negocio_id=eq.${negocioId}&eliminado_en=is.null&select=*&order=creado_en.desc`);
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudieron cargar los mensajes"); }
+    return res.json();
+  },
+  async crearMensajeCliente(clienteId, texto, recordarHastaLeido, intervaloHoras) {
+    const negocioId = await obtenerMiNegocioId();
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/mensajes_clientes`, {
+      method: "POST",
+      extraHeaders: { Prefer: "return=representation" },
+      body: JSON.stringify({ negocio_id: negocioId, cliente_id: clienteId, texto, recordar_hasta_leido: recordarHastaLeido, intervalo_horas: intervaloHoras }),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo enviar el mensaje"); }
+    const [creado] = await res.json();
+    return creado;
+  },
+  // Solo funciona mientras el mensaje sigue "no leído" — si el cliente ya lo
+  // leyó, el servidor rechaza el cambio para no alterar el historial.
+  async editarMensajeCliente(id, texto) {
+    const negocioId = await obtenerMiNegocioId();
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/mensajes_clientes?id=eq.${id}&negocio_id=eq.${negocioId}`, {
+      method: "PATCH",
+      extraHeaders: { Prefer: "return=representation" },
+      body: JSON.stringify({ texto }),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo editar el mensaje"); }
+    return res.json();
+  },
+  // Borrado lógico: nunca se elimina de verdad, para no perder el rastro de
+  // qué se le avisó a cada cliente.
+  async eliminarMensajeCliente(id) {
+    const negocioId = await obtenerMiNegocioId();
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/mensajes_clientes?id=eq.${id}&negocio_id=eq.${negocioId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ eliminado_en: new Date().toISOString() }),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo eliminar el mensaje"); }
   },
 
   // --- Proveedores ---
@@ -2130,7 +2216,7 @@ function calcularCreditoDisponiblePct(totalOriginal, totalPagado, reglas = REGLA
   return Math.max(0, Math.min(100, Math.round((totalPagado / totalOriginal) * 100)));
 }
 
-function ModalAccionesCliente({ cliente, estado, onCerrar, onAgregarFiado, onAbonar, onHistorial, onEditar, onEliminar, onCompartir, compartiendo, onAvisar, onClasificar, onBloquear }) {
+function ModalAccionesCliente({ cliente, estado, onCerrar, onAgregarFiado, onAbonar, onHistorial, onEditar, onEliminar, onCompartir, compartiendo, onAvisar, onMensajeDirecto, onClasificar, onBloquear }) {
   if (!cliente) return null;
   return (
     <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-40" onClick={onCerrar}>
@@ -2143,7 +2229,8 @@ function ModalAccionesCliente({ cliente, estado, onCerrar, onAgregarFiado, onAbo
           <button onClick={onHistorial} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5">📋 Ver historial</button>
           {cliente.telefono ? (
             <>
-              <button onClick={onAvisar} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5">🔔 Enviar aviso</button>
+              <button onClick={onAvisar} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5">🔔 Enviar aviso (WhatsApp)</button>
+              <button onClick={onMensajeDirecto} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5">💬 Mensaje directo (notificación)</button>
               <button onClick={onCompartir} disabled={compartiendo} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/10 flex items-center gap-2.5 disabled:opacity-50">
                 📤 {compartiendo ? "Preparando link..." : "Compartir por WhatsApp"}
               </button>
@@ -2244,6 +2331,99 @@ function ModalAviso({ abierto, cliente, reglasCredito, ultimaActividad, onEnviar
 }
 
 // --- Clasificar cuenta: marcar como deuda antigua (manual, nunca automático) o como recuperada; o quitarle la marca.
+// --- Mensaje directo al cliente: llega como notificación real (no WhatsApp).
+// Mientras siga "no leído" el servidor lo recuerda solo cada tantas horas;
+// se detiene apenas el cliente lo abre de verdad en su página.
+function ModalMensajesCliente({ abierto, cliente, mensajes, cargando, enviando, onEnviar, onEditar, onEliminar, onCerrar }) {
+  const [texto, setTexto] = useState("");
+  const [recordar, setRecordar] = useState(true);
+  const [horas, setHoras] = useState(8);
+  const [editandoId, setEditandoId] = useState(null);
+  const [textoEdit, setTextoEdit] = useState("");
+
+  useEffect(() => {
+    if (abierto) { setTexto(""); setRecordar(true); setHoras(8); setEditandoId(null); }
+  }, [abierto, cliente]);
+
+  if (!abierto || !cliente) return null;
+
+  const fmtFecha = (iso) => iso ? new Date(iso).toLocaleString("es-NI", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50" onClick={onCerrar}>
+      <div onClick={(e) => e.stopPropagation()} className="bg-white dark:bg-black rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-sm max-h-[85vh] overflow-y-auto">
+        <div className="font-semibold text-slate-800 dark:text-white mb-3 font-display">Mensajes a {cliente.nombre}</div>
+
+        <textarea value={texto} onChange={(e) => setTexto(e.target.value)} rows={3}
+          placeholder='Ej: "Tu crédito está bloqueado por no pagar."'
+          className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B] mb-2" />
+
+        <label className="flex flex-wrap items-center gap-1.5 text-xs text-slate-600 dark:text-white/70 mb-1">
+          <input type="checkbox" checked={recordar} onChange={(e) => setRecordar(e.target.checked)} />
+          Recordar cada
+          <input type="number" min="1" max="72" value={horas} disabled={!recordar}
+            onChange={(e) => setHoras(Math.max(1, Number(e.target.value) || 8))}
+            className="w-14 px-1.5 py-1 rounded border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-center disabled:opacity-40" />
+          horas hasta que lo lea
+        </label>
+        {!recordar && <p className="text-[11px] text-slate-400 dark:text-white/40 mb-2">Se manda una sola vez, sin recordatorios.</p>}
+
+        <button disabled={!texto.trim() || enviando} onClick={() => { onEnviar(texto.trim(), recordar, horas); setTexto(""); }}
+          className="w-full mt-2 px-3 py-2.5 rounded-lg text-sm font-semibold bg-[#16233D] text-white hover:brightness-110 mb-4 disabled:opacity-50 flex items-center justify-center gap-2">
+          {enviando && <IconLoading />} 📨 {enviando ? "Enviando..." : "Enviar mensaje"}
+        </button>
+
+        <div className="text-xs font-semibold text-slate-500 dark:text-white uppercase mb-2">Enviados</div>
+        {cargando && <p className="text-xs text-slate-400">Cargando...</p>}
+        {!cargando && mensajes.length === 0 && <p className="text-xs text-slate-400 dark:text-white/40">Todavía no le enviaste ningún mensaje a este cliente.</p>}
+
+        <div className="space-y-2">
+          {mensajes.map((m) => (
+            <div key={m.id} className="border border-slate-200 dark:border-white/10 rounded-lg p-2.5">
+              {editandoId === m.id ? (
+                <>
+                  <textarea value={textoEdit} onChange={(e) => setTextoEdit(e.target.value)} rows={2}
+                    className="w-full px-2 py-1.5 rounded border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-xs mb-1.5" />
+                  <div className="flex gap-1.5">
+                    <button onClick={() => { onEditar(m.id, textoEdit.trim()); setEditandoId(null); }}
+                      className="flex-1 text-xs font-semibold bg-[#16233D] text-white rounded py-1.5">Guardar</button>
+                    <button onClick={() => setEditandoId(null)} className="flex-1 text-xs border border-slate-200 dark:border-white/10 rounded py-1.5 text-slate-600 dark:text-white">Cancelar</button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between mb-1 gap-2">
+                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${m.estado === "leido" ? "bg-emerald-100 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400" : "bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400"}`}>
+                      {m.estado === "leido" ? "🟢 Leído" : "🔵 No leído"}
+                    </span>
+                    <span className="text-[10px] text-slate-400 dark:text-white/40">Enviado: {fmtFecha(m.creado_en)}</span>
+                  </div>
+                  <p className="text-xs text-slate-700 dark:text-white/80 whitespace-pre-wrap mb-1.5">{m.texto}</p>
+                  {m.estado === "leido" ? (
+                    <p className="text-[10px] text-slate-400 dark:text-white/40 mb-1.5">Leído: {fmtFecha(m.leido_en)}</p>
+                  ) : (
+                    m.recordar_hasta_leido && <p className="text-[10px] text-slate-400 dark:text-white/40 mb-1.5">Último recordatorio: {fmtFecha(m.ultimo_recordatorio_en)}</p>
+                  )}
+                  <div className="flex gap-1.5">
+                    {m.estado === "no_leido" && (
+                      <button onClick={() => { setEditandoId(m.id); setTextoEdit(m.texto); }}
+                        className="flex-1 text-[11px] border border-slate-200 dark:border-white/10 rounded py-1.5 text-slate-600 dark:text-white">✏️ Editar</button>
+                    )}
+                    <button onClick={() => onEliminar(m.id)}
+                      className="flex-1 text-[11px] text-rose-500 border border-rose-200 dark:border-rose-900/30 rounded py-1.5">🗑️ Eliminar</button>
+                  </div>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <button onClick={onCerrar} className="w-full mt-4 px-3 py-2.5 rounded-lg text-sm font-medium border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white">Cerrar</button>
+      </div>
+    </div>
+  );
+}
+
 function ModalClasificarCliente({ abierto, cliente, guardando, onGuardar, onCerrar }) {
   const [notas, setNotas] = useState("");
   useEffect(() => { if (abierto) setNotas(cliente?.notas_admin || ""); }, [abierto, cliente]);
@@ -2896,6 +3076,10 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
   const [compartiendoId, setCompartiendoId] = useState(null);
   const [clienteAviso, setClienteAviso] = useState(null);
   const [clienteClasificar, setClienteClasificar] = useState(null);
+  const [clienteMensajes, setClienteMensajes] = useState(null);
+  const [mensajesDelCliente, setMensajesDelCliente] = useState([]);
+  const [cargandoMensajes, setCargandoMensajes] = useState(false);
+  const [enviandoMensaje, setEnviandoMensaje] = useState(false);
 
   const compartirCliente = async (cliente) => {
     setCompartiendoId(cliente.id);
@@ -2953,6 +3137,45 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
     if (telefonoLimpio) window.open(`https://wa.me/${telefonoLimpio}?text=${encodeURIComponent(mensaje)}`, "_blank");
     await onRegistrarHistorial(cliente.id, "aviso", `${tipo}: ${mensaje}`, Number(cliente.saldo_pendiente) || 0);
     setClienteAviso(null);
+  };
+
+  const abrirMensajes = async (cliente) => {
+    setClienteMensajes(cliente);
+    setCargandoMensajes(true);
+    try {
+      const lista = await supaApi.listarMensajesCliente(cliente.id);
+      setMensajesDelCliente(lista);
+    } catch (e) { mostrarError(e.message); }
+    finally { setCargandoMensajes(false); }
+  };
+
+  const enviarMensajeDirecto = async (texto, recordarHastaLeido, intervaloHoras) => {
+    if (!texto || !clienteMensajes) return;
+    setEnviandoMensaje(true);
+    try {
+      const creado = await supaApi.crearMensajeCliente(clienteMensajes.id, texto, recordarHastaLeido, intervaloHoras);
+      notificarMensajeCliente(creado.id);
+      setMensajesDelCliente((prev) => [creado, ...prev]);
+      mostrarAviso("Mensaje enviado.");
+    } catch (e) { mostrarError(e.message); }
+    finally { setEnviandoMensaje(false); }
+  };
+
+  const editarMensajeDirecto = async (id, texto) => {
+    if (!texto) return;
+    try {
+      const [actualizado] = await supaApi.editarMensajeCliente(id, texto);
+      setMensajesDelCliente((prev) => prev.map((m) => (m.id === id ? actualizado : m)));
+    } catch (e) { mostrarError(e.message); }
+  };
+
+  const eliminarMensajeDirecto = async (id) => {
+    const ok = await confirmarAccion("¿Eliminar este mensaje? Ya no se le va a mostrar al cliente ni se le va a seguir recordando.");
+    if (!ok) return;
+    try {
+      await supaApi.eliminarMensajeCliente(id);
+      setMensajesDelCliente((prev) => prev.filter((m) => m.id !== id));
+    } catch (e) { mostrarError(e.message); }
   };
 
   const clasificarCliente = async (cliente, categoria, notas) => {
@@ -3062,6 +3285,7 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
         onCompartir={() => compartirCliente(clienteMenu)}
         compartiendo={compartiendoId === clienteMenu?.id}
         onAvisar={() => { setClienteAviso(clienteMenu); setClienteMenu(null); }}
+        onMensajeDirecto={() => { abrirMensajes(clienteMenu); setClienteMenu(null); }}
         onClasificar={() => { setClienteClasificar(clienteMenu); setClienteMenu(null); }}
         onBloquear={async () => { const c = clienteMenu; setClienteMenu(null); await onActualizarCliente(c.id, { bloqueado: !c.bloqueado, fecha_bloqueo: !c.bloqueado ? new Date().toISOString() : c.fecha_bloqueo, fecha_desbloqueo: c.bloqueado ? new Date().toISOString() : null }); await onRegistrarHistorial(c.id, "cambio_estado", c.bloqueado ? "Desbloqueado manualmente" : "Bloqueado manualmente", Number(c.saldo_pendiente) || 0); }}
         onEliminar={() => { const c = clienteMenu; setClienteMenu(null); eliminarCliente(c); }} />
@@ -3072,6 +3296,9 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
       <ModalHistorialCliente abierto={!!clienteHistorial} cliente={clienteHistorial} pagos={pagosFiado} onCerrar={() => setClienteHistorial(null)} onEditarFiado={onEditarFiado} onEliminarFiado={onEliminarFiado} />
       <ModalAviso abierto={!!clienteAviso} cliente={clienteAviso} reglasCredito={reglasCredito} ultimaActividad={clienteAviso ? ultimaPorCliente[clienteAviso.id] : null}
         onEnviar={enviarAviso} onCerrar={() => setClienteAviso(null)} />
+
+      <ModalMensajesCliente abierto={!!clienteMensajes} cliente={clienteMensajes} mensajes={mensajesDelCliente} cargando={cargandoMensajes} enviando={enviandoMensaje}
+        onEnviar={enviarMensajeDirecto} onEditar={editarMensajeDirecto} onEliminar={eliminarMensajeDirecto} onCerrar={() => setClienteMensajes(null)} />
       <ModalClasificarCliente abierto={!!clienteClasificar} cliente={clienteClasificar} guardando={guardando} onGuardar={clasificarCliente} onCerrar={() => setClienteClasificar(null)} />
     </div>
   );
@@ -5852,6 +6079,24 @@ function PaginaCuentaPublica({ token }) {
   const [datos, setDatos] = useState(undefined); // undefined = cargando
   const [error, setError] = useState(null);
   const [notif, setNotif] = useState("verificando"); // verificando | inactivo | activando | activo | no_soportado | denegado
+  const [mensajes, setMensajes] = useState([]);
+  const [marcandoId, setMarcandoId] = useState(null);
+  const [mostrarAyuda, setMostrarAyuda] = useState(false);
+
+  const cargarMensajes = () => {
+    obtenerMensajesPublicos(token).then(setMensajes).catch(() => {});
+  };
+
+  useEffect(() => { cargarMensajes(); }, [token]);
+
+  const marcarLeido = async (id) => {
+    setMarcandoId(id);
+    try {
+      await marcarMensajeLeidoPublico(token, id);
+      setMensajes((prev) => prev.map((m) => (m.id === id ? { ...m, estado: "leido", leido_en: new Date().toISOString() } : m)));
+    } catch (e) { mostrarError(e.message); }
+    finally { setMarcandoId(null); }
+  };
 
   useEffect(() => {
     obtenerCuentaPublica(token)
@@ -5886,6 +6131,20 @@ function PaginaCuentaPublica({ token }) {
     } catch (e) { setNotif("inactivo"); mostrarError("No se pudo activar la notificación. Probá de nuevo."); }
   };
 
+  const desactivarNotificaciones = async () => {
+    setNotif("activando");
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        await eliminarSuscripcionPublica(token, sub.endpoint).catch(() => {});
+        await sub.unsubscribe();
+      }
+      setNotif("inactivo");
+      mostrarAviso("Notificaciones desactivadas.");
+    } catch (e) { setNotif("activo"); mostrarError("No se pudo desactivar. Probá de nuevo."); }
+  };
+
   const fmt = (n) => formatMonedaPublico(n, datos?.moneda_codigo);
   const fechaCorta = (iso) => new Date(iso).toLocaleDateString("es-NI", { day: "2-digit", month: "short", year: "numeric" });
 
@@ -5907,11 +6166,45 @@ function PaginaCuentaPublica({ token }) {
         {notif === "activo" && (
           <div className="w-full mb-4 px-4 py-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-medium text-center">
             🔔 Notificaciones activadas — te avisamos cuando haya novedades
+            <button onClick={desactivarNotificaciones} className="block mx-auto mt-1.5 text-[11px] underline text-emerald-800/70">Desactivar</button>
           </div>
         )}
         {notif === "denegado" && (
           <div className="w-full mb-4 px-4 py-2.5 rounded-xl bg-slate-100 text-slate-500 text-xs text-center">
             Bloqueaste las notificaciones para esta página. Activalas desde los ajustes de tu navegador si querés recibir avisos.
+          </div>
+        )}
+
+        <button onClick={() => setMostrarAyuda((v) => !v)} className="w-full mb-4 text-xs text-slate-400 underline text-center">
+          {mostrarAyuda ? "Ocultar ayuda" : "❓ ¿Qué es esta página y cómo funciona?"}
+        </button>
+        {mostrarAyuda && (
+          <div className="w-full mb-4 px-4 py-3 rounded-xl bg-slate-100 text-slate-600 text-xs space-y-2">
+            <p>Esta página muestra tu cuenta con <strong>{datos?.nombre_negocio || "el negocio"}</strong>: lo que te fiaron, tus abonos y los mensajes que te manden.</p>
+            <p><strong>Para volver a entrar</strong>, guardá este link (agregalo a favoritos o a la pantalla de inicio de tu teléfono) — es siempre el mismo, no cambia.</p>
+            <p><strong>Las notificaciones</strong> son avisos que te llegan al teléfono cuando te registran algo nuevo o te mandan un mensaje. Podés activarlas o desactivarlas cuando quieras con el botón de arriba.</p>
+          </div>
+        )}
+
+        {mensajes.length > 0 && (
+          <div className="w-full mb-4 space-y-2">
+            {[...mensajes].sort((a, b) => (a.estado === b.estado ? 0 : a.estado === "no_leido" ? -1 : 1)).map((m) => (
+              <div key={m.id} className={`rounded-xl p-4 border ${m.estado === "no_leido" ? "bg-amber-50 border-amber-200" : "bg-white border-slate-200"}`}>
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className={`text-[11px] font-semibold ${m.estado === "no_leido" ? "text-amber-700" : "text-slate-400"}`}>
+                    {m.estado === "no_leido" ? "🔵 Mensaje nuevo" : "🟢 Leído"}
+                  </span>
+                  <span className="text-[10px] text-slate-400">{fechaCorta(m.creado_en)}</span>
+                </div>
+                <p className="text-sm text-slate-700 whitespace-pre-wrap">{m.texto}</p>
+                {m.estado === "no_leido" && (
+                  <button onClick={() => marcarLeido(m.id)} disabled={marcandoId === m.id}
+                    className="w-full mt-3 px-3 py-2 rounded-lg bg-[#16233D] text-white text-xs font-semibold disabled:opacity-50">
+                    {marcandoId === m.id ? "Marcando..." : "Marcar como leído"}
+                  </button>
+                )}
+              </div>
+            ))}
           </div>
         )}
 
