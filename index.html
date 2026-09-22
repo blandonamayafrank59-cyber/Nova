@@ -638,40 +638,6 @@ async function guardarSuscripcionPublica(token, subscription) {
   if (!res.ok) throw new Error("No se pudo activar la notificación");
 }
 
-// Trae los mensajes que el negocio le mandó a este cliente (sin sesión,
-// validado por su token). El propio SQL filtra por token, así que un
-// cliente nunca puede ver mensajes de otro.
-async function obtenerMensajesPublicos(token) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/mensajes_publicos`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
-    body: JSON.stringify({ p_token: token }),
-  });
-  if (!res.ok) throw new Error("No se pudieron cargar los mensajes");
-  return res.json();
-}
-// Marca un mensaje como leído DE VERDAD (acción explícita del cliente, no
-// solo porque le llegó la notificación). Detiene sus recordatorios.
-async function marcarMensajeLeidoPublico(token, mensajeId) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/marcar_mensaje_leido_publico`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
-    body: JSON.stringify({ p_token: token, p_mensaje_id: mensajeId }),
-  });
-  if (!res.ok) throw new Error("No se pudo marcar como leído");
-  return res.json();
-}
-// Apaga las notificaciones de este cliente: borra la suscripción tanto del
-// navegador como del servidor, para que ya no se le vuelva a mandar nada.
-async function eliminarSuscripcionPublica(token, endpoint) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/eliminar_suscripcion_push_publico`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
-    body: JSON.stringify({ p_token: token, p_endpoint: endpoint }),
-  });
-  if (!res.ok) throw new Error("No se pudo desactivar la notificación");
-}
-
 // Dispara la notificación push al cliente (si activó notificaciones). Se
 // llama "en segundo plano": si falla, no debe interrumpir ni bloquear la
 // venta/abono, que ya se guardó bien de todos modos — pero sí avisa con un
@@ -686,17 +652,6 @@ function notificarCliente(clienteId, tipo) {
     else if (d.enviadas === 0) { mostrarAviso("[debug notificación] no había ninguna suscripción activa para este cliente"); }
     else { mostrarAviso(`[debug notificación] enviada (${d.enviadas})`); }
   }).catch((e) => { mostrarAviso(`[debug notificación] fallo de red: ${e.message}`); });
-}
-
-// Dispara el push de un mensaje directo ya guardado (id de la tabla
-// mensajes_clientes). Se llama "en segundo plano": si falla, el mensaje ya
-// quedó guardado igual y el recordatorio automático del servidor lo va a
-// reintentar más adelante, así que no hace falta bloquear ni avisar aquí.
-function notificarMensajeCliente(mensajeId) {
-  peticionApi(`${SUPABASE_URL}/functions/v1/enviar-notificacion-push`, {
-    method: "POST",
-    body: JSON.stringify({ mensaje_id: mensajeId, origen: window.location.origin }),
-  }).catch(() => {});
 }
 
 async function obtenerMiNegocioId() {
@@ -994,47 +949,6 @@ const supaApi = {
     });
     if (!res2.ok) throw new Error("No se pudo generar el link del cliente");
     return nuevoToken;
-  },
-
-  // --- Mensajes directos a clientes (bloqueo de crédito, recordatorios, etc.) ---
-  async listarMensajesCliente(clienteId) {
-    const negocioId = await obtenerMiNegocioId();
-    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/mensajes_clientes?cliente_id=eq.${clienteId}&negocio_id=eq.${negocioId}&eliminado_en=is.null&select=*&order=creado_en.desc`);
-    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudieron cargar los mensajes"); }
-    return res.json();
-  },
-  async crearMensajeCliente(clienteId, texto, recordarHastaLeido, intervaloHoras) {
-    const negocioId = await obtenerMiNegocioId();
-    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/mensajes_clientes`, {
-      method: "POST",
-      extraHeaders: { Prefer: "return=representation" },
-      body: JSON.stringify({ negocio_id: negocioId, cliente_id: clienteId, texto, recordar_hasta_leido: recordarHastaLeido, intervalo_horas: intervaloHoras }),
-    });
-    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo enviar el mensaje"); }
-    const [creado] = await res.json();
-    return creado;
-  },
-  // Solo funciona mientras el mensaje sigue "no leído" — si el cliente ya lo
-  // leyó, el servidor rechaza el cambio para no alterar el historial.
-  async editarMensajeCliente(id, texto) {
-    const negocioId = await obtenerMiNegocioId();
-    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/mensajes_clientes?id=eq.${id}&negocio_id=eq.${negocioId}`, {
-      method: "PATCH",
-      extraHeaders: { Prefer: "return=representation" },
-      body: JSON.stringify({ texto }),
-    });
-    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo editar el mensaje"); }
-    return res.json();
-  },
-  // Borrado lógico: nunca se elimina de verdad, para no perder el rastro de
-  // qué se le avisó a cada cliente.
-  async eliminarMensajeCliente(id) {
-    const negocioId = await obtenerMiNegocioId();
-    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/mensajes_clientes?id=eq.${id}&negocio_id=eq.${negocioId}`, {
-      method: "PATCH",
-      body: JSON.stringify({ eliminado_en: new Date().toISOString() }),
-    });
-    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.message || d.hint || "No se pudo eliminar el mensaje"); }
   },
 
   // --- Proveedores ---
@@ -2216,7 +2130,7 @@ function calcularCreditoDisponiblePct(totalOriginal, totalPagado, reglas = REGLA
   return Math.max(0, Math.min(100, Math.round((totalPagado / totalOriginal) * 100)));
 }
 
-function ModalAccionesCliente({ cliente, estado, onCerrar, onAgregarFiado, onAbonar, onHistorial, onEditar, onEliminar, onCompartir, compartiendo, onAvisar, onMensajeDirecto, onClasificar, onBloquear }) {
+function ModalAccionesCliente({ cliente, estado, onCerrar, onAgregarFiado, onAbonar, onHistorial, onEditar, onEliminar, onCompartir, compartiendo, onAvisar, onClasificar, onBloquear }) {
   if (!cliente) return null;
   return (
     <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-40" onClick={onCerrar}>
@@ -2229,8 +2143,7 @@ function ModalAccionesCliente({ cliente, estado, onCerrar, onAgregarFiado, onAbo
           <button onClick={onHistorial} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5">📋 Ver historial</button>
           {cliente.telefono ? (
             <>
-              <button onClick={onAvisar} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5">🔔 Enviar aviso (WhatsApp)</button>
-              <button onClick={onMensajeDirecto} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5">💬 Mensaje directo (notificación)</button>
+              <button onClick={onAvisar} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-slate-700 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-center gap-2.5">🔔 Enviar aviso</button>
               <button onClick={onCompartir} disabled={compartiendo} className="w-full text-left px-3 py-3 rounded-lg text-sm font-medium text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/10 flex items-center gap-2.5 disabled:opacity-50">
                 📤 {compartiendo ? "Preparando link..." : "Compartir por WhatsApp"}
               </button>
@@ -2290,7 +2203,7 @@ function TarjetaCliente({ cliente, estado, totalPagado, ultimaActividad, onAbrir
 
 // --- Enviar aviso: arma el mensaje con datos reales del cliente y abre WhatsApp con el texto listo.
 // Nunca "envía" nada por sí solo — si no hay teléfono o el usuario cierra WhatsApp sin mandar, no se finge un envío.
-function ModalAviso({ abierto, cliente, reglasCredito, ultimaActividad, onEnviar, onCerrar }) {
+function ModalAviso({ abierto, cliente, reglasCredito, ultimaActividad, onEnviar, onCerrar, nombreNegocio }) {
   const [tipo, setTipo] = useState("recordatorio_abono");
   useEffect(() => { if (abierto) setTipo("recordatorio_abono"); }, [abierto, cliente]);
   if (!abierto || !cliente) return null;
@@ -2298,15 +2211,22 @@ function ModalAviso({ abierto, cliente, reglasCredito, ultimaActividad, onEnviar
   const saldo = Number(cliente.saldo_pendiente) || 0;
   const estado = calcularEstadoCliente(cliente, ultimaActividad, reglasCredito);
   const diasTexto = estado.diasAtraso ? `${estado.diasAtraso} día(s)` : null;
+  const negocio = (nombreNegocio || "").trim() || "Nuestro negocio";
+
+  // Encabezado y cierre iguales para todos los avisos, para que se vea como una notificación
+  // del sistema del negocio y no como un mensaje personal escrito a mano.
+  const encabezado = `🔔 *${negocio}*\n_Aviso automático de tu cuenta_\n\nHola *${cliente.nombre}*,`;
+  const cierre = `\n\n━━━━━━━━━━━━\n_Este es un mensaje automático generado por el sistema de ${negocio}. Por cualquier consulta, respondé este mismo chat._`;
+  const armar = (cuerpo) => `${encabezado}\n\n${cuerpo}${cierre}`;
 
   const TIPOS = {
-    proximo_vencer: { label: "🔔 Crédito próximo a vencer", texto: `Hola ${cliente.nombre}! Te recordamos que tu crédito está próximo a vencer. Saldo pendiente: ${formatMoneda(saldo.toFixed(2))}. ¡Gracias por tu confianza!` },
-    recordatorio_abono: { label: "💰 Recordatorio de abono", texto: `Hola ${cliente.nombre}! Este es un recordatorio de tu saldo pendiente: ${formatMoneda(saldo.toFixed(2))}. Cuando puedas, pasá a abonar. ¡Gracias!` },
-    vencido: { label: "📅 Crédito vencido", texto: `Hola ${cliente.nombre}, tu crédito está vencido${diasTexto ? ` hace ${diasTexto}` : ""}. Saldo pendiente: ${formatMoneda(saldo.toFixed(2))}. Por favor comunicate con nosotros.` },
-    bloqueado: { label: "🚫 Crédito bloqueado", texto: `Hola ${cliente.nombre}, tu crédito quedó bloqueado por el atraso en los pagos. Saldo pendiente: ${formatMoneda(saldo.toFixed(2))}. Escribinos para regularizarlo.` },
-    desbloqueado: { label: "🔓 Crédito desbloqueado", texto: `Hola ${cliente.nombre}! Tu crédito fue desbloqueado. ¡Gracias por ponerte al día!` },
-    abono_registrado: { label: "✅ Abono registrado", texto: `Hola ${cliente.nombre}, registramos tu abono. Saldo pendiente actual: ${formatMoneda(saldo.toFixed(2))}. ¡Gracias!` },
-    saldo_pendiente: { label: "💳 Recordatorio de saldo", texto: `Hola ${cliente.nombre}, tu saldo pendiente con nosotros es de ${formatMoneda(saldo.toFixed(2))}.` },
+    proximo_vencer: { label: "🔔 Crédito próximo a vencer", texto: armar(`Te informamos que tu crédito está *próximo a vencer*.\n\n💰 Saldo pendiente: *${formatMoneda(saldo.toFixed(2))}*`) },
+    recordatorio_abono: { label: "💰 Recordatorio de abono", texto: armar(`Este es un recordatorio de tu saldo pendiente.\n\n💰 Saldo pendiente: *${formatMoneda(saldo.toFixed(2))}*\n\nCuando puedas, te esperamos para tu abono.`) },
+    vencido: { label: "📅 Crédito vencido", texto: armar(`Tu crédito figura como *vencido*${diasTexto ? ` desde hace ${diasTexto}` : ""} en nuestro sistema.\n\n💰 Saldo pendiente: *${formatMoneda(saldo.toFixed(2))}*\n\nPor favor comunicate con nosotros para regularizar tu situación.`) },
+    bloqueado: { label: "🚫 Crédito bloqueado", texto: armar(`Tu crédito ha sido *bloqueado* por el sistema debido al atraso en los pagos.\n\n💰 Saldo pendiente: *${formatMoneda(saldo.toFixed(2))}*\n\nEscribinos para conocer los pasos para regularizarlo.`) },
+    desbloqueado: { label: "🔓 Crédito desbloqueado", texto: armar(`Te informamos que tu crédito fue *desbloqueado*. ¡Gracias por ponerte al día!`) },
+    abono_registrado: { label: "✅ Abono registrado", texto: armar(`Confirmamos el registro de tu abono.\n\n💰 Saldo pendiente actual: *${formatMoneda(saldo.toFixed(2))}*\n\n¡Gracias por tu pago!`) },
+    saldo_pendiente: { label: "💳 Recordatorio de saldo", texto: armar(`Te recordamos tu saldo pendiente registrado en nuestro sistema.\n\n💰 Saldo pendiente: *${formatMoneda(saldo.toFixed(2))}*`) },
   };
 
   return (
@@ -2322,7 +2242,7 @@ function ModalAviso({ abierto, cliente, reglasCredito, ultimaActividad, onEnviar
           ))}
         </div>
         <div className="text-xs text-slate-500 dark:text-white/60 bg-slate-50 dark:bg-white/5 rounded-lg p-3 mb-3 whitespace-pre-wrap">{TIPOS[tipo].texto}</div>
-        <p className="text-[11px] text-slate-400 dark:text-white/40 mb-3">Esto abre WhatsApp con el mensaje listo — vos lo enviás desde ahí. Si no hay internet, quedará preparado para cuando puedas mandarlo.</p>
+        <p className="text-[11px] text-slate-400 dark:text-white/40 mb-3">Se abre WhatsApp con este mensaje ya escrito — solo tenés que tocar enviar. Sigue mandándose desde tu número; el formato lo hace ver como una notificación del sistema, no como un mensaje personal.</p>
         <button onClick={() => onEnviar(cliente, TIPOS[tipo].label, TIPOS[tipo].texto)} className="w-full px-3 py-2.5 rounded-lg text-sm font-semibold bg-[#16233D] text-white hover:brightness-110 mb-2">📤 Preparar y abrir WhatsApp</button>
         <button onClick={onCerrar} className="w-full px-3 py-2.5 rounded-lg text-sm font-medium border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white">Cancelar</button>
       </div>
@@ -2331,99 +2251,6 @@ function ModalAviso({ abierto, cliente, reglasCredito, ultimaActividad, onEnviar
 }
 
 // --- Clasificar cuenta: marcar como deuda antigua (manual, nunca automático) o como recuperada; o quitarle la marca.
-// --- Mensaje directo al cliente: llega como notificación real (no WhatsApp).
-// Mientras siga "no leído" el servidor lo recuerda solo cada tantas horas;
-// se detiene apenas el cliente lo abre de verdad en su página.
-function ModalMensajesCliente({ abierto, cliente, mensajes, cargando, enviando, onEnviar, onEditar, onEliminar, onCerrar }) {
-  const [texto, setTexto] = useState("");
-  const [recordar, setRecordar] = useState(true);
-  const [horas, setHoras] = useState(8);
-  const [editandoId, setEditandoId] = useState(null);
-  const [textoEdit, setTextoEdit] = useState("");
-
-  useEffect(() => {
-    if (abierto) { setTexto(""); setRecordar(true); setHoras(8); setEditandoId(null); }
-  }, [abierto, cliente]);
-
-  if (!abierto || !cliente) return null;
-
-  const fmtFecha = (iso) => iso ? new Date(iso).toLocaleString("es-NI", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
-
-  return (
-    <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50" onClick={onCerrar}>
-      <div onClick={(e) => e.stopPropagation()} className="bg-white dark:bg-black rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-sm max-h-[85vh] overflow-y-auto">
-        <div className="font-semibold text-slate-800 dark:text-white mb-3 font-display">Mensajes a {cliente.nombre}</div>
-
-        <textarea value={texto} onChange={(e) => setTexto(e.target.value)} rows={3}
-          placeholder='Ej: "Tu crédito está bloqueado por no pagar."'
-          className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B] mb-2" />
-
-        <label className="flex flex-wrap items-center gap-1.5 text-xs text-slate-600 dark:text-white/70 mb-1">
-          <input type="checkbox" checked={recordar} onChange={(e) => setRecordar(e.target.checked)} />
-          Recordar cada
-          <input type="number" min="1" max="72" value={horas} disabled={!recordar}
-            onChange={(e) => setHoras(Math.max(1, Number(e.target.value) || 8))}
-            className="w-14 px-1.5 py-1 rounded border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-center disabled:opacity-40" />
-          horas hasta que lo lea
-        </label>
-        {!recordar && <p className="text-[11px] text-slate-400 dark:text-white/40 mb-2">Se manda una sola vez, sin recordatorios.</p>}
-
-        <button disabled={!texto.trim() || enviando} onClick={() => { onEnviar(texto.trim(), recordar, horas); setTexto(""); }}
-          className="w-full mt-2 px-3 py-2.5 rounded-lg text-sm font-semibold bg-[#16233D] text-white hover:brightness-110 mb-4 disabled:opacity-50 flex items-center justify-center gap-2">
-          {enviando && <IconLoading />} 📨 {enviando ? "Enviando..." : "Enviar mensaje"}
-        </button>
-
-        <div className="text-xs font-semibold text-slate-500 dark:text-white uppercase mb-2">Enviados</div>
-        {cargando && <p className="text-xs text-slate-400">Cargando...</p>}
-        {!cargando && mensajes.length === 0 && <p className="text-xs text-slate-400 dark:text-white/40">Todavía no le enviaste ningún mensaje a este cliente.</p>}
-
-        <div className="space-y-2">
-          {mensajes.map((m) => (
-            <div key={m.id} className="border border-slate-200 dark:border-white/10 rounded-lg p-2.5">
-              {editandoId === m.id ? (
-                <>
-                  <textarea value={textoEdit} onChange={(e) => setTextoEdit(e.target.value)} rows={2}
-                    className="w-full px-2 py-1.5 rounded border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-xs mb-1.5" />
-                  <div className="flex gap-1.5">
-                    <button onClick={() => { onEditar(m.id, textoEdit.trim()); setEditandoId(null); }}
-                      className="flex-1 text-xs font-semibold bg-[#16233D] text-white rounded py-1.5">Guardar</button>
-                    <button onClick={() => setEditandoId(null)} className="flex-1 text-xs border border-slate-200 dark:border-white/10 rounded py-1.5 text-slate-600 dark:text-white">Cancelar</button>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="flex items-center justify-between mb-1 gap-2">
-                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${m.estado === "leido" ? "bg-emerald-100 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400" : "bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400"}`}>
-                      {m.estado === "leido" ? "🟢 Leído" : "🔵 No leído"}
-                    </span>
-                    <span className="text-[10px] text-slate-400 dark:text-white/40">Enviado: {fmtFecha(m.creado_en)}</span>
-                  </div>
-                  <p className="text-xs text-slate-700 dark:text-white/80 whitespace-pre-wrap mb-1.5">{m.texto}</p>
-                  {m.estado === "leido" ? (
-                    <p className="text-[10px] text-slate-400 dark:text-white/40 mb-1.5">Leído: {fmtFecha(m.leido_en)}</p>
-                  ) : (
-                    m.recordar_hasta_leido && <p className="text-[10px] text-slate-400 dark:text-white/40 mb-1.5">Último recordatorio: {fmtFecha(m.ultimo_recordatorio_en)}</p>
-                  )}
-                  <div className="flex gap-1.5">
-                    {m.estado === "no_leido" && (
-                      <button onClick={() => { setEditandoId(m.id); setTextoEdit(m.texto); }}
-                        className="flex-1 text-[11px] border border-slate-200 dark:border-white/10 rounded py-1.5 text-slate-600 dark:text-white">✏️ Editar</button>
-                    )}
-                    <button onClick={() => onEliminar(m.id)}
-                      className="flex-1 text-[11px] text-rose-500 border border-rose-200 dark:border-rose-900/30 rounded py-1.5">🗑️ Eliminar</button>
-                  </div>
-                </>
-              )}
-            </div>
-          ))}
-        </div>
-
-        <button onClick={onCerrar} className="w-full mt-4 px-3 py-2.5 rounded-lg text-sm font-medium border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white">Cerrar</button>
-      </div>
-    </div>
-  );
-}
-
 function ModalClasificarCliente({ abierto, cliente, guardando, onGuardar, onCerrar }) {
   const [notas, setNotas] = useState("");
   useEffect(() => { if (abierto) setNotas(cliente?.notas_admin || ""); }, [abierto, cliente]);
@@ -3061,7 +2888,7 @@ function ModalNuevoFiado({ abierto, clientes, productos, clientePreseleccionado,
   );
 }
 
-function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, error, onRecargar, onCrearCliente, onActualizarCliente, onEliminarCliente, onCrearFiado, onRegistrarPago, onEditarFiado, onEliminarFiado, reglasCredito, onAplicarComision, onRegistrarHistorial }) {
+function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, error, onRecargar, onCrearCliente, onActualizarCliente, onEliminarCliente, onCrearFiado, onRegistrarPago, onEditarFiado, onEliminarFiado, reglasCredito, onAplicarComision, onRegistrarHistorial, nombreNegocio }) {
   const [busqueda, setBusqueda] = useState("");
   const [filtro, setFiltro] = useState("todos"); // todos | activo | atrasado | deuda_antigua | recuperado
   const [modalCliente, setModalCliente] = useState(false);
@@ -3076,10 +2903,6 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
   const [compartiendoId, setCompartiendoId] = useState(null);
   const [clienteAviso, setClienteAviso] = useState(null);
   const [clienteClasificar, setClienteClasificar] = useState(null);
-  const [clienteMensajes, setClienteMensajes] = useState(null);
-  const [mensajesDelCliente, setMensajesDelCliente] = useState([]);
-  const [cargandoMensajes, setCargandoMensajes] = useState(false);
-  const [enviandoMensaje, setEnviandoMensaje] = useState(false);
 
   const compartirCliente = async (cliente) => {
     setCompartiendoId(cliente.id);
@@ -3137,45 +2960,6 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
     if (telefonoLimpio) window.open(`https://wa.me/${telefonoLimpio}?text=${encodeURIComponent(mensaje)}`, "_blank");
     await onRegistrarHistorial(cliente.id, "aviso", `${tipo}: ${mensaje}`, Number(cliente.saldo_pendiente) || 0);
     setClienteAviso(null);
-  };
-
-  const abrirMensajes = async (cliente) => {
-    setClienteMensajes(cliente);
-    setCargandoMensajes(true);
-    try {
-      const lista = await supaApi.listarMensajesCliente(cliente.id);
-      setMensajesDelCliente(lista);
-    } catch (e) { mostrarError(e.message); }
-    finally { setCargandoMensajes(false); }
-  };
-
-  const enviarMensajeDirecto = async (texto, recordarHastaLeido, intervaloHoras) => {
-    if (!texto || !clienteMensajes) return;
-    setEnviandoMensaje(true);
-    try {
-      const creado = await supaApi.crearMensajeCliente(clienteMensajes.id, texto, recordarHastaLeido, intervaloHoras);
-      notificarMensajeCliente(creado.id);
-      setMensajesDelCliente((prev) => [creado, ...prev]);
-      mostrarAviso("Mensaje enviado.");
-    } catch (e) { mostrarError(e.message); }
-    finally { setEnviandoMensaje(false); }
-  };
-
-  const editarMensajeDirecto = async (id, texto) => {
-    if (!texto) return;
-    try {
-      const [actualizado] = await supaApi.editarMensajeCliente(id, texto);
-      setMensajesDelCliente((prev) => prev.map((m) => (m.id === id ? actualizado : m)));
-    } catch (e) { mostrarError(e.message); }
-  };
-
-  const eliminarMensajeDirecto = async (id) => {
-    const ok = await confirmarAccion("¿Eliminar este mensaje? Ya no se le va a mostrar al cliente ni se le va a seguir recordando.");
-    if (!ok) return;
-    try {
-      await supaApi.eliminarMensajeCliente(id);
-      setMensajesDelCliente((prev) => prev.filter((m) => m.id !== id));
-    } catch (e) { mostrarError(e.message); }
   };
 
   const clasificarCliente = async (cliente, categoria, notas) => {
@@ -3285,7 +3069,6 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
         onCompartir={() => compartirCliente(clienteMenu)}
         compartiendo={compartiendoId === clienteMenu?.id}
         onAvisar={() => { setClienteAviso(clienteMenu); setClienteMenu(null); }}
-        onMensajeDirecto={() => { abrirMensajes(clienteMenu); setClienteMenu(null); }}
         onClasificar={() => { setClienteClasificar(clienteMenu); setClienteMenu(null); }}
         onBloquear={async () => { const c = clienteMenu; setClienteMenu(null); await onActualizarCliente(c.id, { bloqueado: !c.bloqueado, fecha_bloqueo: !c.bloqueado ? new Date().toISOString() : c.fecha_bloqueo, fecha_desbloqueo: c.bloqueado ? new Date().toISOString() : null }); await onRegistrarHistorial(c.id, "cambio_estado", c.bloqueado ? "Desbloqueado manualmente" : "Bloqueado manualmente", Number(c.saldo_pendiente) || 0); }}
         onEliminar={() => { const c = clienteMenu; setClienteMenu(null); eliminarCliente(c); }} />
@@ -3294,11 +3077,8 @@ function PaginaCuentasPorCobrar({ clientes, pagosFiado, productos, cargando, err
       <ModalNuevoFiado abierto={modalFiado} clientes={clientes} productos={productos} clientePreseleccionado={clienteParaFiado} guardando={guardando} onGuardar={guardarFiado} onCerrar={() => { setModalFiado(false); setClienteParaFiado(null); }} />
       <ModalAbono abierto={!!clienteAbono} cliente={clienteAbono} guardando={guardando} onGuardar={guardarAbono} onCerrar={() => setClienteAbono(null)} />
       <ModalHistorialCliente abierto={!!clienteHistorial} cliente={clienteHistorial} pagos={pagosFiado} onCerrar={() => setClienteHistorial(null)} onEditarFiado={onEditarFiado} onEliminarFiado={onEliminarFiado} />
-      <ModalAviso abierto={!!clienteAviso} cliente={clienteAviso} reglasCredito={reglasCredito} ultimaActividad={clienteAviso ? ultimaPorCliente[clienteAviso.id] : null}
+      <ModalAviso abierto={!!clienteAviso} cliente={clienteAviso} reglasCredito={reglasCredito} ultimaActividad={clienteAviso ? ultimaPorCliente[clienteAviso.id] : null} nombreNegocio={nombreNegocio}
         onEnviar={enviarAviso} onCerrar={() => setClienteAviso(null)} />
-
-      <ModalMensajesCliente abierto={!!clienteMensajes} cliente={clienteMensajes} mensajes={mensajesDelCliente} cargando={cargandoMensajes} enviando={enviandoMensaje}
-        onEnviar={enviarMensajeDirecto} onEditar={editarMensajeDirecto} onEliminar={eliminarMensajeDirecto} onCerrar={() => setClienteMensajes(null)} />
       <ModalClasificarCliente abierto={!!clienteClasificar} cliente={clienteClasificar} guardando={guardando} onGuardar={clasificarCliente} onCerrar={() => setClienteClasificar(null)} />
     </div>
   );
@@ -4871,8 +4651,93 @@ function ModalEditarEntrada({ entrada, onGuardar, onCerrar, guardando }) {
   );
 }
 
-function ModalProducto({ abierto, producto, onGuardar, onCerrar, guardando, onActualizarProducto, onRecargarProductos }) {
-  const [form, setForm] = useState({ nombre: "", categoria: "", costo: "", venta: "", cantidad: "", minimo: "", unidades_por_caja: "", precio_caja: "" });
+// Escáner de código de barras con la cámara del dispositivo. Usa la API nativa BarcodeDetector
+// (no depende de ninguna librería externa, así que no necesita internet para funcionar).
+// Si el navegador no la soporta, cae a un campo para escribir el código a mano.
+function EscanerCamara({ abierto, onDetectado, onCerrar, continuo = false, titulo = "Escanear código" }) {
+  const videoRef = React.useRef(null);
+  const streamRef = React.useRef(null);
+  const detectorRef = React.useRef(null);
+  const rafRef = React.useRef(null);
+  const ultimoRef = React.useRef({ valor: null, ts: 0 });
+  const [soportado, setSoportado] = useState(true);
+  const [error, setError] = useState("");
+  const [manual, setManual] = useState("");
+
+  useEffect(() => {
+    if (!abierto) return;
+    setError(""); setManual("");
+    if (!("BarcodeDetector" in window)) { setSoportado(false); return; }
+    setSoportado(true);
+    let cancelado = false;
+
+    (async () => {
+      try {
+        detectorRef.current = new window.BarcodeDetector({ formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39", "qr_code"] });
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        if (cancelado) { stream.getTracks().forEach(t => t.stop()); return; }
+        streamRef.current = stream;
+        if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play(); }
+        const loop = async () => {
+          if (cancelado || !videoRef.current) return;
+          try {
+            const codigos = await detectorRef.current.detect(videoRef.current);
+            if (codigos && codigos.length > 0) {
+              const valor = codigos[0].rawValue;
+              const ahora = Date.now();
+              if (valor && (valor !== ultimoRef.current.valor || ahora - ultimoRef.current.ts > 2500)) {
+                ultimoRef.current = { valor, ts: ahora };
+                onDetectado(valor);
+                if (!continuo) return;
+              }
+            }
+          } catch (e) { /* algunos frames fallan al decodificar, se ignora y se reintenta */ }
+          if (!cancelado) rafRef.current = requestAnimationFrame(loop);
+        };
+        loop();
+      } catch (e) {
+        setError("No se pudo acceder a la cámara. Revisá los permisos del navegador, o escribí el código a mano.");
+      }
+    })();
+
+    return () => {
+      cancelado = true;
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+    };
+  }, [abierto]);
+
+  if (!abierto) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black z-[60] flex flex-col">
+      <div className="flex items-center justify-between p-4 text-white shrink-0">
+        <span className="font-semibold">{titulo}</span>
+        <button onClick={onCerrar} className="text-white text-2xl leading-none px-2">✕</button>
+      </div>
+      {soportado && !error ? (
+        <div className="flex-1 relative overflow-hidden">
+          <video ref={videoRef} className="w-full h-full object-cover" muted playsInline />
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <div className="w-4/5 max-w-xs aspect-[3/1] border-2 border-[#E3A73B] rounded-lg" />
+          </div>
+          {continuo && <div className="absolute bottom-0 inset-x-0 p-3 text-center text-white text-xs bg-black/50">Acercá el código a la cámara. Podés escanear varios productos seguidos.</div>}
+        </div>
+      ) : (
+        <div className="flex-1 flex flex-col items-center justify-center p-6 text-white text-center gap-3">
+          <p className="text-sm text-white/70">{error || "Tu navegador no soporta escaneo con cámara. Escribí el código a mano:"}</p>
+          <input value={manual} onChange={(e) => setManual(e.target.value)} placeholder="Código de barras" autoFocus
+            className="w-full max-w-xs px-3 py-2.5 rounded-lg text-slate-800 text-sm outline-none" />
+          <button onClick={() => { if (manual.trim()) { onDetectado(manual.trim()); if (!continuo) setManual(""); } }}
+            className="px-4 py-2.5 rounded-lg bg-[#E3A73B] text-[#16233D] font-semibold text-sm">Usar este código</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ModalProducto({ abierto, producto, onGuardar, onCerrar, guardando, onActualizarProducto, onRecargarProductos, codigoInicial }) {
+  const [form, setForm] = useState({ nombre: "", categoria: "", costo: "", venta: "", cantidad: "", minimo: "", unidades_por_caja: "", precio_caja: "", codigo_barra: "" });
   const [modoCalculo, setModoCalculo] = useState("tradicional"); // "tradicional" | "margen"
   const [pctSeleccionado, setPctSeleccionado] = useState(30);
   const [pctOtro, setPctOtro] = useState("");
@@ -4880,6 +4745,8 @@ function ModalProducto({ abierto, producto, onGuardar, onCerrar, guardando, onAc
   const [ventaManual, setVentaManual] = useState(false);
   const [mostrarCaja, setMostrarCaja] = useState(false);
   const [precioCajaManual, setPrecioCajaManual] = useState(false);
+  const [escanerAbierto, setEscanerAbierto] = useState(false);
+  const [buscandoNombre, setBuscandoNombre] = useState(false);
 
   useEffect(() => {
     if (producto) {
@@ -4887,21 +4754,43 @@ function ModalProducto({ abierto, producto, onGuardar, onCerrar, guardando, onAc
         nombre: producto.nombre, categoria: producto.categoria || "", costo: producto.costo, venta: producto.venta,
         cantidad: producto.cantidad, minimo: producto.minimo,
         unidades_por_caja: producto.unidades_por_caja || "", precio_caja: producto.precio_caja || "",
+        codigo_barra: producto.codigo_barra || "",
       });
       setVentaManual(true); // al editar un producto existente, no recalcular su precio automáticamente
       setMostrarCaja(!!producto.unidades_por_caja || !!producto.precio_caja);
       setPrecioCajaManual(true);
     } else {
-      setForm({ nombre: "", categoria: "", costo: "", venta: "", cantidad: "", minimo: "", unidades_por_caja: "", precio_caja: "" });
+      setForm({ nombre: "", categoria: "", costo: "", venta: "", cantidad: "", minimo: "", unidades_por_caja: "", precio_caja: "", codigo_barra: codigoInicial || "" });
       setVentaManual(false);
       setMostrarCaja(false);
       setPrecioCajaManual(false);
+      if (codigoInicial) buscarNombrePorCodigo(codigoInicial);
     }
     setModoCalculo("tradicional");
     setPctSeleccionado(30);
     setPctOtro("");
     setMostrarOtro(false);
   }, [producto, abierto]);
+
+  // Busca el nombre del producto en una base pública (OpenFoodFacts) a partir del código.
+  // Solo funciona con internet; si falla o no hay conexión, simplemente no completa nada.
+  const buscarNombrePorCodigo = async (codigo) => {
+    if (!codigo || !navigator.onLine) return;
+    setBuscandoNombre(true);
+    try {
+      const res = await fetch(`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(codigo)}.json`);
+      const data = await res.json();
+      const nombreEncontrado = data?.product?.product_name || data?.product?.product_name_es;
+      if (nombreEncontrado) setForm((f) => ({ ...f, nombre: f.nombre || nombreEncontrado }));
+    } catch (e) { /* sin internet o sin resultado: no pasa nada, se carga a mano */ }
+    finally { setBuscandoNombre(false); }
+  };
+
+  const handleCodigoDetectado = (valor) => {
+    setForm((f) => ({ ...f, codigo_barra: valor }));
+    setEscanerAbierto(false);
+    buscarNombrePorCodigo(valor);
+  };
 
   const costoNum = parseFloat(form.costo) || 0;
   const pctActivo = mostrarOtro ? (parseFloat(pctOtro) || 0) : pctSeleccionado;
@@ -4948,6 +4837,21 @@ function ModalProducto({ abierto, producto, onGuardar, onCerrar, guardando, onAc
       <div className="bg-white dark:bg-black rounded-2xl p-6 w-full max-w-sm max-h-[90vh] overflow-y-auto">
         <h2 className="font-semibold text-slate-800 dark:text-white mb-4 font-display">{producto ? "Editar producto" : "Agregar producto"}</h2>
         <div className="space-y-3">
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Código de barras (opcional)</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={form.codigo_barra}
+                onChange={(e) => setForm({ ...form, codigo_barra: e.target.value })}
+                placeholder="Escaneá o escribí el código"
+                className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]"
+              />
+              <button type="button" onClick={() => setEscanerAbierto(true)}
+                className="px-3 rounded-lg border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white shrink-0">📷</button>
+            </div>
+            {buscandoNombre && <p className="text-[11px] text-slate-400 mt-1">Buscando nombre en internet...</p>}
+          </div>
           <div>
             <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Nombre del producto</label>
             <input
@@ -5150,6 +5054,7 @@ function ModalProducto({ abierto, producto, onGuardar, onCerrar, guardando, onAc
           </button>
         </div>
       </div>
+      <EscanerCamara abierto={escanerAbierto} onDetectado={handleCodigoDetectado} onCerrar={() => setEscanerAbierto(false)} titulo="Escanear código de barras" />
     </div>
   );
 }
@@ -5375,9 +5280,12 @@ function PaginaInventario({ productos, clientes = [], cargando, error, onRecarga
   const [productoMenu, setProductoMenu] = useState(null);
   const [productoVentaCantidad, setProductoVentaCantidad] = useState(null);
   const [vendiendo, setVendiendo] = useState(false);
+  const [codigoNuevoPrefill, setCodigoNuevoPrefill] = useState("");
+  const [escanerVentaAbierto, setEscanerVentaAbierto] = useState(false);
+  const [avisoEscaneo, setAvisoEscaneo] = useState(null); // { tipo: "agregado"|"no_encontrado", texto }
 
   const filtrados = productos.filter(p => p.nombre.toLowerCase().includes(busqueda.toLowerCase()));
-  const abrirNuevo = () => { setProductoEditando(null); setModalAbierto(true); };
+  const abrirNuevo = () => { setProductoEditando(null); setCodigoNuevoPrefill(""); setModalAbierto(true); };
   const abrirEditar = (p) => { setProductoEditando(p); setModalAbierto(true); };
 
   const guardar = async (form) => {
@@ -5390,6 +5298,7 @@ function PaginaInventario({ productos, clientes = [], cargando, error, onRecarga
           minimo: parseFloat(form.minimo) || 0,
           unidades_por_caja: form.unidades_por_caja ? parseFloat(form.unidades_por_caja) : null,
           precio_caja: form.precio_caja ? parseFloat(form.precio_caja) : null,
+          codigo_barra: form.codigo_barra ? form.codigo_barra.trim() : null,
         };
         await onActualizar(productoEditando.id, datos);
       } else {
@@ -5399,10 +5308,12 @@ function PaginaInventario({ productos, clientes = [], cargando, error, onRecarga
           cantidad: parseFloat(form.cantidad) || 0, minimo: parseFloat(form.minimo) || 0,
           unidades_por_caja: form.unidades_por_caja ? parseFloat(form.unidades_por_caja) : null,
           precio_caja: form.precio_caja ? parseFloat(form.precio_caja) : null,
+          codigo_barra: form.codigo_barra ? form.codigo_barra.trim() : null,
         };
         await onCrear(datos);
       }
       setModalAbierto(false);
+      setCodigoNuevoPrefill("");
     } catch (e) { mostrarError(e.message); }
     finally { setGuardando(false); }
   };
@@ -5453,6 +5364,27 @@ function PaginaInventario({ productos, clientes = [], cargando, error, onRecarga
     setCarrito(prev => { const copia = { ...prev }; delete copia[id]; return copia; });
   };
 
+  // Búsqueda 100% local (sin internet): el código se busca en los productos ya cargados en el dispositivo.
+  const manejarCodigoEscaneado = (codigo) => {
+    const encontrado = productos.find(p => p.codigo_barra && p.codigo_barra === codigo);
+    if (encontrado) {
+      if (encontrado.cantidad <= (carrito[encontrado.id] || 0)) {
+        setAvisoEscaneo({ tipo: "no_encontrado", texto: `⚠️ ${encontrado.nombre}: no hay más stock disponible` });
+      } else {
+        agregarAlCarrito(encontrado);
+        setAvisoEscaneo({ tipo: "agregado", texto: `✅ ${encontrado.nombre} agregado` });
+      }
+    } else {
+      setEscanerVentaAbierto(false);
+      setCodigoNuevoPrefill(codigo);
+      setProductoEditando(null);
+      setModalAbierto(true);
+      setAvisoEscaneo(null);
+      return;
+    }
+    setTimeout(() => setAvisoEscaneo(null), 1800);
+  };
+
   const handleImagenProducto = async (producto, dataUrl) => {
     await onActualizar(producto.id, { imagen: dataUrl });
   };
@@ -5488,9 +5420,14 @@ function PaginaInventario({ productos, clientes = [], cargando, error, onRecarga
             <IconRefresh className={cargando ? "animate-spin inline-block" : "inline-block"} />
           </button>
           {puedeEditar && (
-            <button onClick={abrirNuevo} className="flex items-center gap-2 bg-[#E3A73B] text-[#16233D] font-semibold text-sm px-4 py-2 rounded-lg hover:brightness-105">
-              <IconPlus /> Agregar producto
-            </button>
+            <>
+              <button onClick={() => setEscanerVentaAbierto(true)} className="flex items-center gap-2 border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white font-medium text-sm px-3 py-2 rounded-lg">
+                📷 Escanear
+              </button>
+              <button onClick={abrirNuevo} className="flex items-center gap-2 bg-[#E3A73B] text-[#16233D] font-semibold text-sm px-4 py-2 rounded-lg hover:brightness-105">
+                <IconPlus /> Agregar producto
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -5534,7 +5471,15 @@ function PaginaInventario({ productos, clientes = [], cargando, error, onRecarga
         onEditar={() => { abrirEditar(productoMenu); setProductoMenu(null); }}
         onEliminar={async () => { if (await confirmarAccion(`¿Eliminar ${productoMenu.nombre}?`)) onEliminar(productoMenu.id); setProductoMenu(null); }}
         onCerrar={() => setProductoMenu(null)} />
-      <ModalProducto abierto={modalAbierto} producto={productoEditando} onGuardar={guardar} onCerrar={() => setModalAbierto(false)} guardando={guardando} onActualizarProducto={onActualizar} onRecargarProductos={onRecargar} />
+      <ModalProducto abierto={modalAbierto} producto={productoEditando} onGuardar={guardar} onCerrar={() => { setModalAbierto(false); setCodigoNuevoPrefill(""); }} guardando={guardando} onActualizarProducto={onActualizar} onRecargarProductos={onRecargar} codigoInicial={codigoNuevoPrefill} />
+
+      <EscanerCamara abierto={escanerVentaAbierto} onDetectado={manejarCodigoEscaneado} onCerrar={() => setEscanerVentaAbierto(false)} continuo titulo="Escanear productos" />
+
+      {avisoEscaneo && (
+        <div className={`fixed top-4 inset-x-4 z-[70] text-center text-sm font-semibold rounded-lg py-2.5 px-4 shadow-lg ${avisoEscaneo.tipo === "agregado" ? "bg-emerald-600 text-white" : "bg-amber-500 text-[#16233D]"}`}>
+          {avisoEscaneo.texto}
+        </div>
+      )}
     </div>
   );
 }
@@ -6079,24 +6024,6 @@ function PaginaCuentaPublica({ token }) {
   const [datos, setDatos] = useState(undefined); // undefined = cargando
   const [error, setError] = useState(null);
   const [notif, setNotif] = useState("verificando"); // verificando | inactivo | activando | activo | no_soportado | denegado
-  const [mensajes, setMensajes] = useState([]);
-  const [marcandoId, setMarcandoId] = useState(null);
-  const [mostrarAyuda, setMostrarAyuda] = useState(false);
-
-  const cargarMensajes = () => {
-    obtenerMensajesPublicos(token).then(setMensajes).catch(() => {});
-  };
-
-  useEffect(() => { cargarMensajes(); }, [token]);
-
-  const marcarLeido = async (id) => {
-    setMarcandoId(id);
-    try {
-      await marcarMensajeLeidoPublico(token, id);
-      setMensajes((prev) => prev.map((m) => (m.id === id ? { ...m, estado: "leido", leido_en: new Date().toISOString() } : m)));
-    } catch (e) { mostrarError(e.message); }
-    finally { setMarcandoId(null); }
-  };
 
   useEffect(() => {
     obtenerCuentaPublica(token)
@@ -6131,20 +6058,6 @@ function PaginaCuentaPublica({ token }) {
     } catch (e) { setNotif("inactivo"); mostrarError("No se pudo activar la notificación. Probá de nuevo."); }
   };
 
-  const desactivarNotificaciones = async () => {
-    setNotif("activando");
-    try {
-      const reg = await navigator.serviceWorker.ready;
-      const sub = await reg.pushManager.getSubscription();
-      if (sub) {
-        await eliminarSuscripcionPublica(token, sub.endpoint).catch(() => {});
-        await sub.unsubscribe();
-      }
-      setNotif("inactivo");
-      mostrarAviso("Notificaciones desactivadas.");
-    } catch (e) { setNotif("activo"); mostrarError("No se pudo desactivar. Probá de nuevo."); }
-  };
-
   const fmt = (n) => formatMonedaPublico(n, datos?.moneda_codigo);
   const fechaCorta = (iso) => new Date(iso).toLocaleDateString("es-NI", { day: "2-digit", month: "short", year: "numeric" });
 
@@ -6166,45 +6079,11 @@ function PaginaCuentaPublica({ token }) {
         {notif === "activo" && (
           <div className="w-full mb-4 px-4 py-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-medium text-center">
             🔔 Notificaciones activadas — te avisamos cuando haya novedades
-            <button onClick={desactivarNotificaciones} className="block mx-auto mt-1.5 text-[11px] underline text-emerald-800/70">Desactivar</button>
           </div>
         )}
         {notif === "denegado" && (
           <div className="w-full mb-4 px-4 py-2.5 rounded-xl bg-slate-100 text-slate-500 text-xs text-center">
             Bloqueaste las notificaciones para esta página. Activalas desde los ajustes de tu navegador si querés recibir avisos.
-          </div>
-        )}
-
-        <button onClick={() => setMostrarAyuda((v) => !v)} className="w-full mb-4 text-xs text-slate-400 underline text-center">
-          {mostrarAyuda ? "Ocultar ayuda" : "❓ ¿Qué es esta página y cómo funciona?"}
-        </button>
-        {mostrarAyuda && (
-          <div className="w-full mb-4 px-4 py-3 rounded-xl bg-slate-100 text-slate-600 text-xs space-y-2">
-            <p>Esta página muestra tu cuenta con <strong>{datos?.nombre_negocio || "el negocio"}</strong>: lo que te fiaron, tus abonos y los mensajes que te manden.</p>
-            <p><strong>Para volver a entrar</strong>, guardá este link (agregalo a favoritos o a la pantalla de inicio de tu teléfono) — es siempre el mismo, no cambia.</p>
-            <p><strong>Las notificaciones</strong> son avisos que te llegan al teléfono cuando te registran algo nuevo o te mandan un mensaje. Podés activarlas o desactivarlas cuando quieras con el botón de arriba.</p>
-          </div>
-        )}
-
-        {mensajes.length > 0 && (
-          <div className="w-full mb-4 space-y-2">
-            {[...mensajes].sort((a, b) => (a.estado === b.estado ? 0 : a.estado === "no_leido" ? -1 : 1)).map((m) => (
-              <div key={m.id} className={`rounded-xl p-4 border ${m.estado === "no_leido" ? "bg-amber-50 border-amber-200" : "bg-white border-slate-200"}`}>
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className={`text-[11px] font-semibold ${m.estado === "no_leido" ? "text-amber-700" : "text-slate-400"}`}>
-                    {m.estado === "no_leido" ? "🔵 Mensaje nuevo" : "🟢 Leído"}
-                  </span>
-                  <span className="text-[10px] text-slate-400">{fechaCorta(m.creado_en)}</span>
-                </div>
-                <p className="text-sm text-slate-700 whitespace-pre-wrap">{m.texto}</p>
-                {m.estado === "no_leido" && (
-                  <button onClick={() => marcarLeido(m.id)} disabled={marcandoId === m.id}
-                    className="w-full mt-3 px-3 py-2 rounded-lg bg-[#16233D] text-white text-xs font-semibold disabled:opacity-50">
-                    {marcandoId === m.id ? "Marcando..." : "Marcar como leído"}
-                  </button>
-                )}
-              </div>
-            ))}
           </div>
         )}
 
@@ -6841,13 +6720,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
 
   const handleRegistrarPago = async (cliente, monto) => {
     const nuevoSaldo = Math.max(0, (Number(cliente.saldo_pendiente) || 0) - monto);
-    // Si no hay forma de saber si hay caja abierta (sin internet y sin nada
-    // guardado todavía en el teléfono), el abono NO debe perderse por eso:
-    // se registra igual, sin caja asociada (se puede sumar a mano después).
-    let sesionAbierta = null;
-    try {
-      ({ datos: sesionAbierta } = await obtenerConRespaldo("caja_sesion", () => supaApi.obtenerSesionAbierta()));
-    } catch (e) { /* seguimos sin sesión conocida; no bloqueamos el abono por esto */ }
+    const { datos: sesionAbierta } = await obtenerConRespaldo("caja_sesion", () => supaApi.obtenerSesionAbierta());
     const descripcionMovimiento = `Abono de fiado — ${cliente.nombre}`;
     const resultado = await conAlternativaOffline(
       () => supaApi.crearPagoYActualizarSaldo(cliente.id, monto, nuevoSaldo, sesionAbierta?.id || null, descripcionMovimiento),
@@ -7057,7 +6930,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
     perdidas: <PaginaPerdidas productos={productos} onActualizarProducto={handleActualizar} onRecargarProductos={cargarProductos} />,
     historial: <PaginaHistorial productos={productos} onActualizarProducto={handleActualizar} onRecargarProductos={cargarProductos} filtroInicial={historialFiltroInicial} />,
     estadisticas: <PaginaEstadisticas consumoHogar={consumoHogar} onVerVentas={irAHistorialVentas} />,
-    cuentas: <PaginaCuentasPorCobrar clientes={clientes} pagosFiado={pagosFiado} productos={productos} cargando={cargandoCuentas} error={errorCuentas} onRecargar={cargarCuentasPorCobrar} onCrearCliente={handleCrearCliente} onActualizarCliente={handleActualizarCliente} onEliminarCliente={handleEliminarCliente} onCrearFiado={handleCrearFiado} onRegistrarPago={handleRegistrarPago} onEditarFiado={handleEditarFiado} onEliminarFiado={handleEliminarFiado} reglasCredito={reglasCredito} onAplicarComision={handleAplicarComision} onRegistrarHistorial={handleRegistrarHistorialCredito} />,
+    cuentas: <PaginaCuentasPorCobrar clientes={clientes} pagosFiado={pagosFiado} productos={productos} cargando={cargandoCuentas} error={errorCuentas} onRecargar={cargarCuentasPorCobrar} onCrearCliente={handleCrearCliente} onActualizarCliente={handleActualizarCliente} onEliminarCliente={handleEliminarCliente} onCrearFiado={handleCrearFiado} onRegistrarPago={handleRegistrarPago} onEditarFiado={handleEditarFiado} onEliminarFiado={handleEliminarFiado} reglasCredito={reglasCredito} onAplicarComision={handleAplicarComision} onRegistrarHistorial={handleRegistrarHistorialCredito} nombreNegocio={nombreNegocio} />,
     consumo: <PaginaConsumoHogar productos={productos} registros={consumoHogar} cargando={cargandoConsumo} error={errorConsumo} onRegistrar={handleRegistrarConsumo} onEliminar={handleEliminarConsumo} />,
     produccion: <PaginaProduccion productos={productos} lotes={lotes} cargando={cargandoLotes} error={errorLotes} onIniciar={handleIniciarLote} onAgregarIngrediente={handleAgregarIngredienteLote} onFinalizar={handleFinalizarLote} onEliminar={handleEliminarLote} />,
     notas: <PaginaNotas notas={notas} cargando={cargandoNotas} error={errorNotas} onCrear={handleCrearNota} onActualizar={handleActualizarNota} onEliminar={handleEliminarNota} />,
