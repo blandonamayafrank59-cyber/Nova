@@ -6841,7 +6841,13 @@ function AppInterna({ sesion, onCerrarSesion }) {
 
   const handleRegistrarPago = async (cliente, monto) => {
     const nuevoSaldo = Math.max(0, (Number(cliente.saldo_pendiente) || 0) - monto);
-    const { datos: sesionAbierta } = await obtenerConRespaldo("caja_sesion", () => supaApi.obtenerSesionAbierta());
+    // Si no hay forma de saber si hay caja abierta (sin internet y sin nada
+    // guardado todavía en el teléfono), el abono NO debe perderse por eso:
+    // se registra igual, sin caja asociada (se puede sumar a mano después).
+    let sesionAbierta = null;
+    try {
+      ({ datos: sesionAbierta } = await obtenerConRespaldo("caja_sesion", () => supaApi.obtenerSesionAbierta()));
+    } catch (e) { /* seguimos sin sesión conocida; no bloqueamos el abono por esto */ }
     const descripcionMovimiento = `Abono de fiado — ${cliente.nombre}`;
     const resultado = await conAlternativaOffline(
       () => supaApi.crearPagoYActualizarSaldo(cliente.id, monto, nuevoSaldo, sesionAbierta?.id || null, descripcionMovimiento),
