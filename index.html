@@ -330,6 +330,21 @@ async function sincronizarPendientes() {
         pago.sesion_id = resolverIdConMapa(pago.sesion_id, mapaIds);
         await supaApi.crearMovimiento(pago);
       }
+      else if (p.tipo === "abrir_caja") {
+        const creado = await supaApi.abrirCaja(p.payload.montoInicial, p.payload.fechaApertura);
+        const real = Array.isArray(creado) ? creado[0] : creado;
+        mapaIds[p.payload.idLocal] = real.id;
+        await mapaIdsGuardar(mapaIds);
+      }
+      else if (p.tipo === "cerrar_caja") {
+        const sesionId = resolverIdConMapa(p.payload.sesionId, mapaIds);
+        await supaApi.cerrarCaja(sesionId, p.payload.montoFinal);
+      }
+      else if (p.tipo === "actualizar_sesion_caja") {
+        const sesionId = resolverIdConMapa(p.payload.id, mapaIds);
+        await supaApi.actualizarSesionCaja(sesionId, p.payload.cambios);
+      }
+      else if (p.tipo === "crear_movimiento_guardado") await supaApi.crearMovimientoGuardado(p.payload);
       else if (p.tipo === "crear_cliente") {
         const creado = await supaApi.crearCliente(p.payload.datos);
         const real = Array.isArray(creado) ? creado[0] : creado;
@@ -3766,9 +3781,17 @@ function PaginaCaja({ productos = [] }) {
     if (isNaN(nuevo) || nuevo < 0) { mostrarError("Poné un monto válido."); return; }
     setGuardandoMontoInicial(true);
     try {
-      await supaApi.actualizarSesionCaja(sesion.id, { monto_inicial: nuevo });
+      const resultado = await conAlternativaOffline(
+        () => supaApi.actualizarSesionCaja(sesion.id, { monto_inicial: nuevo }),
+        "actualizar_sesion_caja", { id: sesion.id, cambios: { monto_inicial: nuevo } },
+        async () => {
+          const actualizada = { ...sesion, monto_inicial: nuevo };
+          await cacheGuardar("caja_sesion", actualizada);
+          setSesion(actualizada);
+        }
+      );
       setPanelAbierto(null);
-      await cargarTodo();
+      if (resultado !== null) await cargarTodo();
     } catch (e) { mostrarError(e.message); }
     finally { setGuardandoMontoInicial(false); }
   };
@@ -3830,11 +3853,31 @@ function PaginaCaja({ productos = [] }) {
     }
     setProcesando(true);
     try {
-      await supaApi.abrirCaja(monto, fechaApertura);
-      await supaApi.crearMovimientoGuardado({ tipo: "ingreso", monto, descripcion: `Apertura de caja ${fechaApertura}` });
+      const idProvisional = idLocal();
+      const descApertura = `Apertura de caja ${fechaApertura}`;
+      const resultado = await conAlternativaOffline(
+        () => supaApi.abrirCaja(monto, fechaApertura),
+        "abrir_caja", { idLocal: idProvisional, montoInicial: monto, fechaApertura },
+        async () => {
+          const provisional = { id: idProvisional, monto_inicial: monto, estado: "abierta", fecha_apertura: fechaApertura, _local: true };
+          await cacheGuardar("caja_sesion", provisional);
+          setSesion(provisional);
+        }
+      );
+      await conAlternativaOffline(
+        () => supaApi.crearMovimientoGuardado({ tipo: "ingreso", monto, descripcion: descApertura }),
+        "crear_movimiento_guardado", { tipo: "ingreso", monto, descripcion: descApertura },
+        async () => {
+          const provisionalMov = { id: idLocal(), tipo: "ingreso", monto, descripcion: descApertura, creado_en: new Date().toISOString(), _local: true };
+          const actuales = (await cacheLeer("dinero_guardado")) || movsGuardado;
+          const actualizados = [provisionalMov, ...actuales];
+          await cacheGuardar("dinero_guardado", actualizados);
+          setMovsGuardado(actualizados);
+        }
+      );
       setMontoApertura("");
       setFechaApertura(new Date().toISOString().slice(0, 10));
-      await cargarTodo();
+      if (resultado !== null) await cargarTodo();
     } catch (e) { mostrarError(e.message); }
     finally { setProcesando(false); }
   };
@@ -3871,9 +3914,22 @@ function PaginaCaja({ productos = [] }) {
     if (isNaN(montoFinal) || montoFinal < 0) { mostrarError("Poné el saldo final contado."); return; }
     setProcesando(true);
     try {
-      await supaApi.cerrarCaja(sesion.id, montoFinal);
+      const resultado = await conAlternativaOffline(
+        () => supaApi.cerrarCaja(sesion.id, montoFinal),
+        "cerrar_caja", { sesionId: sesion.id, montoFinal },
+        async () => {
+          const cerrada = { ...sesion, estado: "cerrada", monto_final: montoFinal, fecha_cierre: new Date().toISOString(), _local: true };
+          const historialActual = (await cacheLeer("caja_historial")) || historial;
+          const historialActualizado = [cerrada, ...historialActual];
+          await cacheGuardar("caja_historial", historialActualizado);
+          await cacheGuardar("caja_sesion", null);
+          setHistorial(historialActualizado);
+          setSesion(null);
+          setMovimientos([]);
+        }
+      );
       setMostrarCierre(false);
-      await cargarTodo();
+      if (resultado !== null) await cargarTodo();
     } catch (e) { mostrarError(e.message); }
     finally { setProcesando(false); }
   };
@@ -3898,12 +3954,30 @@ function PaginaCaja({ productos = [] }) {
     setProcesandoGuardado(true);
     try {
       const desc = descGuardado.trim() || (tipoGuardado === "retiro" ? "Retiro hacia dinero guardado" : "Ingreso desde dinero guardado");
-      await supaApi.crearMovimiento({
-        sesion_id: sesion.id, tipo: tipoGuardado === "retiro" ? "gasto" : "ingreso", descripcion: MARCA_GUARDADO + desc, monto,
-      });
-      await supaApi.crearMovimientoGuardado({ tipo: tipoGuardado, monto, descripcion: desc });
+      const movCaja = { sesion_id: sesion.id, tipo: tipoGuardado === "retiro" ? "gasto" : "ingreso", descripcion: MARCA_GUARDADO + desc, monto };
+      const resultado = await conAlternativaOffline(
+        () => supaApi.crearMovimiento(movCaja),
+        "crear_movimiento", movCaja,
+        async () => {
+          const provisional = { ...movCaja, id: idLocal(), creado_en: new Date().toISOString(), _local: true };
+          const actualizados = [provisional, ...movimientos];
+          await cacheGuardar("caja_movimientos_abiertos", actualizados);
+          setMovimientos(actualizados);
+        }
+      );
+      await conAlternativaOffline(
+        () => supaApi.crearMovimientoGuardado({ tipo: tipoGuardado, monto, descripcion: desc }),
+        "crear_movimiento_guardado", { tipo: tipoGuardado, monto, descripcion: desc },
+        async () => {
+          const provisionalG = { id: idLocal(), tipo: tipoGuardado, monto, descripcion: desc, creado_en: new Date().toISOString(), _local: true };
+          const actuales = (await cacheLeer("dinero_guardado")) || movsGuardado;
+          const actualizados = [provisionalG, ...actuales];
+          await cacheGuardar("dinero_guardado", actualizados);
+          setMovsGuardado(actualizados);
+        }
+      );
       setMontoGuardado(""); setDescGuardado("");
-      await cargarTodo();
+      if (resultado !== null) await cargarTodo();
     } catch (e) { mostrarError(e.message); }
     finally { setProcesandoGuardado(false); }
   };
@@ -3922,14 +3996,23 @@ function PaginaCaja({ productos = [] }) {
     if (delta === 0) { setEditandoGuardado(false); return; }
     setGuardandoAjusteGuardado(true);
     try {
-      if (delta > 0) {
-        await supaApi.crearMovimientoGuardado({ tipo: "retiro", monto: delta, descripcion: "Ajuste manual de dinero guardado" });
-      } else {
-        await supaApi.crearMovimientoGuardado({ tipo: "ingreso", monto: Math.abs(delta), descripcion: "Ajuste manual de dinero guardado" });
-      }
+      const mov = delta > 0
+        ? { tipo: "retiro", monto: delta, descripcion: "Ajuste manual de dinero guardado" }
+        : { tipo: "ingreso", monto: Math.abs(delta), descripcion: "Ajuste manual de dinero guardado" };
+      const resultado = await conAlternativaOffline(
+        () => supaApi.crearMovimientoGuardado(mov),
+        "crear_movimiento_guardado", mov,
+        async () => {
+          const provisional = { ...mov, id: idLocal(), creado_en: new Date().toISOString(), _local: true };
+          const actuales = (await cacheLeer("dinero_guardado")) || movsGuardado;
+          const actualizados = [provisional, ...actuales];
+          await cacheGuardar("dinero_guardado", actualizados);
+          setMovsGuardado(actualizados);
+        }
+      );
       setEditandoGuardado(false);
       setNuevoMontoGuardado("");
-      await cargarTodo();
+      if (resultado !== null) await cargarTodo();
     } catch (e) { mostrarError(e.message); }
     finally { setGuardandoAjusteGuardado(false); }
   };
@@ -3939,8 +4022,19 @@ function PaginaCaja({ productos = [] }) {
     if (!(await confirmarAccion(`¿Poner en cero el dinero guardado? Ahora mismo hay ${formatMoneda(saldoGuardado.toFixed(2))}. Se guarda en el historial, no se puede deshacer.`))) return;
     setGuardandoAjusteGuardado(true);
     try {
-      await supaApi.crearMovimientoGuardado({ tipo: "ingreso", monto: saldoGuardado, descripcion: "Guardado puesto en cero" });
-      await cargarTodo();
+      const mov = { tipo: "ingreso", monto: saldoGuardado, descripcion: "Guardado puesto en cero" };
+      const resultado = await conAlternativaOffline(
+        () => supaApi.crearMovimientoGuardado(mov),
+        "crear_movimiento_guardado", mov,
+        async () => {
+          const provisional = { ...mov, id: idLocal(), creado_en: new Date().toISOString(), _local: true };
+          const actuales = (await cacheLeer("dinero_guardado")) || movsGuardado;
+          const actualizados = [provisional, ...actuales];
+          await cacheGuardar("dinero_guardado", actualizados);
+          setMovsGuardado(actualizados);
+        }
+      );
+      if (resultado !== null) await cargarTodo();
     } catch (e) { mostrarError(e.message); }
     finally { setGuardandoAjusteGuardado(false); }
   };
