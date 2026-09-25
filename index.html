@@ -2484,8 +2484,14 @@ function ModalHistorialCliente({ abierto, cliente, pagos, onCerrar, onEditarFiad
                 <span className="font-mono font-semibold text-slate-700 dark:text-white">{formatMoneda(Number(f.total).toFixed(2))}</span>
                 <span className="text-xs text-slate-400 dark:text-white/40">{new Date(f.creado_en).toLocaleString()}</span>
               </div>
-              <div className="text-xs text-slate-500 dark:text-white/60 mt-1 mb-2">
-                {(f.productos || []).map(p => `${p.nombre} x${p.cantidad}`).join(", ") || "Sin productos"}
+              <div className="text-xs text-slate-500 dark:text-white/60 mt-1 mb-2 space-y-0.5">
+                {(f.productos || []).length === 0 && "Sin productos"}
+                {(f.productos || []).map((p, i) => (
+                  <div key={i} className="flex items-center justify-between gap-2">
+                    <span className="truncate">{p.nombre} <span className="text-slate-400 dark:text-white/40">x{p.cantidad}</span></span>
+                    {p.precio_unitario != null && <span className="font-mono shrink-0">{formatMoneda((p.precio_unitario * p.cantidad).toFixed(2))}</span>}
+                  </div>
+                ))}
               </div>
               <div className="flex gap-2">
                 <button onClick={() => setFiadoEditando(f)} className="text-xs px-2.5 py-1 rounded border border-slate-200 dark:border-white/20 text-slate-600 dark:text-white">✏️ Editar</button>
@@ -6218,7 +6224,11 @@ function PaginaCuentaPublica({ token }) {
                         <span className="text-xs text-slate-400">{fechaCorta(f.creado_en)}</span>
                         <span className="text-sm font-semibold text-slate-800">{fmt(f.total)}</span>
                       </div>
-                      <p className="text-xs text-slate-500 mt-0.5">{(f.productos || []).map(p => `${p.cantidad}x ${p.nombre}`).join(", ")}</p>
+                      <div className="text-xs text-slate-500 mt-0.5 space-y-0.5">
+                        {(f.productos || []).map((p, j) => (
+                          <div key={j}>{p.cantidad}x {p.nombre}</div>
+                        ))}
+                      </div>
                     </div>
                   ))}
                 </div>
