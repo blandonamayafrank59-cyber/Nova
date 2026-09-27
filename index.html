@@ -755,7 +755,7 @@ function formatMoneda(valor) {
 const supaApi = {
   async listarProductos() {
     const negocioId = await obtenerMiNegocioId();
-    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/productos?negocio_id=eq.${negocioId}&select=*&order=creado_en.asc`);
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/productos?negocio_id=eq.${negocioId}&eliminado_en=is.null&select=*&order=creado_en.asc`);
     if (!res.ok) throw new Error("No se pudo cargar el inventario");
     return res.json();
   },
@@ -779,9 +779,14 @@ const supaApi = {
     if (!res.ok) throw new Error(await mensajeErrorSupabase(res, "No se pudo actualizar el producto"));
     return res.json();
   },
+  // Borrado lógico: nunca se borra la fila de verdad, para no volver a
+  // perder un producto (y su precio) sin remedio.
   async eliminarProducto(id) {
     const negocioId = await obtenerMiNegocioId();
-    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/productos?id=eq.${id}&negocio_id=eq.${negocioId}`, { method: "DELETE" });
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/productos?id=eq.${id}&negocio_id=eq.${negocioId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ eliminado_en: new Date().toISOString() }),
+    });
     if (!res.ok) throw new Error(await mensajeErrorSupabase(res, "No se pudo eliminar el producto"));
   },
 
@@ -2889,10 +2894,20 @@ function ModalNuevoFiado({ abierto, clientes, productos, clientePreseleccionado,
     setNoResueltos(noResueltos.filter((_, idx) => idx !== i));
   };
 
+  const actualizarPrecioNoResuelto = (i, valor) => {
+    setNoResueltos(prev => prev.map((it, idx) => (idx === i ? { ...it, precioManual: valor } : it)));
+  };
+
   const resolverComoExterno = (i) => {
     const item = noResueltos[i];
-    if (!item.precio) { mostrarError("No reconocí el precio de este — agregalo como externo a mano abajo."); return; }
-    setItems(prev => [...prev, { producto_id: null, nombre: item.nombreCrudo, cantidad: item.cantidad, precio_unitario: item.precio / item.cantidad, tipo: "externo" }]);
+    const precioUnit = item.precioManual !== undefined && item.precioManual !== ""
+      ? Number(item.precioManual)
+      : (item.precio !== null ? item.precio / item.cantidad : null);
+    if (precioUnit === null || isNaN(precioUnit) || precioUnit < 0) {
+      mostrarError("Escribí el precio de este producto para agregarlo fuera de inventario.");
+      return;
+    }
+    setItems(prev => [...prev, { producto_id: null, nombre: item.nombreCrudo, cantidad: item.cantidad, precio_unitario: precioUnit, tipo: "externo" }]);
     setNoResueltos(noResueltos.filter((_, idx) => idx !== i));
   };
 
@@ -2943,11 +2958,14 @@ function ModalNuevoFiado({ abierto, clientes, productos, clientePreseleccionado,
                     </select>
                     <button onClick={() => descartarNoResuelto(i)} className="text-rose-500 text-xs px-2">Descartar</button>
                   </div>
-                  {item.precio !== null && (
-                    <button onClick={() => resolverComoExterno(i)} className="w-full mt-1.5 text-xs font-medium text-[#16233D] dark:text-[#E3A73B] underline text-left">
-                      O agregar "{item.nombreCrudo}" como fuera de inventario ({formatMoneda(item.precio)})
-                    </button>
-                  )}
+                  <div className="flex items-center gap-1.5 mt-1.5">
+                    <span className="text-[11px] text-slate-500 dark:text-white/50 whitespace-nowrap">o fuera de inventario a</span>
+                    <input type="number" min="0" step="0.01" inputMode="decimal" placeholder="precio c/u"
+                      value={item.precioManual ?? (item.precio !== null ? (item.precio / item.cantidad).toFixed(2) : "")}
+                      onChange={(e) => actualizarPrecioNoResuelto(i, e.target.value)}
+                      className="w-20 px-1.5 py-1 rounded border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-xs text-slate-700 dark:text-white outline-none" />
+                    <button onClick={() => resolverComoExterno(i)} className="text-xs font-medium text-[#16233D] dark:text-[#E3A73B] underline">Agregar</button>
+                  </div>
                 </div>
               ))}
             </div>
