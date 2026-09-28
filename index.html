@@ -2156,7 +2156,7 @@ function PanelProveedores({ proveedores, puedeEditar, onCrear, onActualizar, onE
   );
 }
 
-function PaginaConfiguracion({ nombreNegocio, setNombreNegocio, logo, onLogoChange, onQuitarLogo, logoInputRef, moneda, onMonedaChange, cambiandoMoneda, tokenCatalogo }) {
+function PaginaConfiguracion({ nombreNegocio, setNombreNegocio, logo, onLogoChange, onQuitarLogo, logoInputRef, moneda, onMonedaChange, cambiandoMoneda, tokenCatalogo, whatsappNegocio, setWhatsappNegocio }) {
   const linkCatalogo = tokenCatalogo ? `${window.location.origin}${window.location.pathname}#catalogo-${tokenCatalogo}` : null;
   const copiarLinkCatalogo = async () => {
     if (!linkCatalogo) return;
@@ -2174,6 +2174,13 @@ function PaginaConfiguracion({ nombreNegocio, setNombreNegocio, logo, onLogoChan
         <input value={nombreNegocio} onChange={(e) => setNombreNegocio(e.target.value)} placeholder="Ej. Bendición de Dios"
           className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-black text-slate-800 dark:text-white text-sm outline-none focus:ring-2 focus:ring-[#E3A73B]" />
         <p className="text-[11px] text-slate-400 dark:text-white/40 mt-2">Este nombre aparece en el menú y en los reportes.</p>
+      </div>
+
+      <div className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-white/10 rounded-2xl p-5 mb-4">
+        <label className="block text-xs font-semibold text-slate-500 dark:text-white/60 uppercase tracking-wide mb-2">WhatsApp del negocio</label>
+        <input value={whatsappNegocio} onChange={(e) => setWhatsappNegocio(e.target.value)} placeholder="Ej. 8888 8888" type="tel"
+          className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-black text-slate-800 dark:text-white text-sm outline-none focus:ring-2 focus:ring-[#E3A73B]" />
+        <p className="text-[11px] text-slate-400 dark:text-white/40 mt-2">Acá te van a llegar los pedidos que la gente haga desde tu catálogo público.</p>
       </div>
 
       <div className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-white/10 rounded-2xl p-5 mb-4">
@@ -6210,6 +6217,11 @@ function PaginaCatalogoPublico({ token }) {
   const [productos, setProductos] = useState(undefined); // undefined = cargando
   const [error, setError] = useState(null);
   const [busqueda, setBusqueda] = useState("");
+  const [carrito, setCarrito] = useState({}); // { producto_id: cantidad }
+  const [carritoAbierto, setCarritoAbierto] = useState(false);
+  const [checkoutAbierto, setCheckoutAbierto] = useState(false);
+  const [imagenZoom, setImagenZoom] = useState(null); // { src, alt } | null
+  const claveCarrito = `nova_carrito_${token}`;
 
   useEffect(() => {
     obtenerCatalogoPublico(token)
@@ -6217,12 +6229,41 @@ function PaginaCatalogoPublico({ token }) {
       .catch((e) => setError(e.message));
   }, [token]);
 
+  // El carrito vive en este navegador (no en la nube): así, si alguien agrega
+  // cosas y no llega a mandar el pedido, lo encuentra igual la próxima vez que entra.
+  useEffect(() => {
+    try {
+      const guardado = localStorage.getItem(claveCarrito);
+      if (guardado) setCarrito(JSON.parse(guardado));
+    } catch (e) { /* si el carrito guardado está corrupto, se ignora y arranca vacío */ }
+  }, [token]);
+
+  useEffect(() => {
+    try { localStorage.setItem(claveCarrito, JSON.stringify(carrito)); } catch (e) { /* localStorage lleno o bloqueado: no es crítico */ }
+  }, [carrito, token]);
+
   const info = productos && productos[0];
   const nombreNegocio = info?.negocio_nombre || "Catálogo";
   const logo = info?.negocio_logo;
   const moneda = info?.moneda_codigo;
+  const whatsappNegocio = info?.negocio_whatsapp;
   const termino = busqueda.trim().toLowerCase();
   const filtrados = (productos || []).filter((p) => !termino || p.nombre.toLowerCase().includes(termino));
+
+  const porId = Object.fromEntries((productos || []).map((p) => [p.producto_id, p]));
+  const itemsCarrito = Object.entries(carrito).filter(([, cant]) => cant > 0).map(([id, cant]) => ({ producto: porId[id], cantidad: cant })).filter((it) => it.producto);
+  const totalItems = itemsCarrito.reduce((a, it) => a + it.cantidad, 0);
+  const totalCarrito = itemsCarrito.reduce((a, it) => a + it.producto.precio * it.cantidad, 0);
+
+  const cambiarCantidad = (producto, delta) => {
+    setCarrito((prev) => {
+      const actual = prev[producto.producto_id] || 0;
+      const stockDisponible = producto.stock == null ? Infinity : Number(producto.stock);
+      const nueva = Math.max(0, Math.min(stockDisponible, actual + delta));
+      if (nueva === 0) { const copia = { ...prev }; delete copia[producto.producto_id]; return copia; }
+      return { ...prev, [producto.producto_id]: nueva };
+    });
+  };
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -6245,24 +6286,166 @@ function PaginaCatalogoPublico({ token }) {
         {productos && productos.length === 0 && <p className="text-center text-sm text-slate-400 py-10">Todavía no hay productos en el catálogo.</p>}
         {productos && productos.length > 0 && filtrados.length === 0 && <p className="text-center text-sm text-slate-400 py-10">Nada coincide con "{busqueda}".</p>}
 
-        <div className="grid grid-cols-2 gap-3 pb-10">
-          {filtrados.map((p) => (
-            <div key={p.producto_id} className="bg-white rounded-xl overflow-hidden shadow-sm border border-slate-100">
-              <div className="aspect-square bg-slate-100">
-                {p.imagen ? (
-                  <img src={p.imagen} alt={p.nombre} className="w-full h-full object-cover" />
-                ) : (
-                  <div className="w-full h-full flex items-center justify-center text-3xl text-slate-300">📦</div>
-                )}
+        <div className="grid grid-cols-2 gap-3 pb-24">
+          {filtrados.map((p) => {
+            const sinStock = p.stock != null && Number(p.stock) <= 0;
+            const cantEnCarrito = carrito[p.producto_id] || 0;
+            return (
+              <div key={p.producto_id} className="bg-white rounded-xl overflow-hidden shadow-sm border border-slate-100">
+                <button type="button" onClick={() => p.imagen && setImagenZoom({ src: p.imagen, alt: p.nombre })} className="aspect-square bg-slate-100 w-full block">
+                  {p.imagen ? (
+                    <img src={p.imagen} alt={p.nombre} className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-3xl text-slate-300">📦</div>
+                  )}
+                </button>
+                <div className="p-2.5">
+                  <p className="text-sm font-medium text-slate-800 leading-tight">{p.nombre}</p>
+                  {p.descripcion && <p className="text-[11px] text-slate-400 mt-0.5 line-clamp-2">{p.descripcion}</p>}
+                  <p className="text-sm font-bold text-[#16233D] mt-1.5">{formatMonedaPublico(p.precio, moneda)}</p>
+                  {sinStock ? (
+                    <p className="text-[11px] font-semibold text-rose-500 mt-2">Sin stock</p>
+                  ) : cantEnCarrito > 0 ? (
+                    <div className="flex items-center justify-between mt-2 bg-slate-50 rounded-lg">
+                      <button onClick={() => cambiarCantidad(p, -1)} className="w-8 h-8 text-slate-600 font-bold">−</button>
+                      <span className="text-sm font-semibold text-slate-800">{cantEnCarrito}</span>
+                      <button onClick={() => cambiarCantidad(p, 1)} className="w-8 h-8 text-slate-600 font-bold">+</button>
+                    </div>
+                  ) : (
+                    <button onClick={() => cambiarCantidad(p, 1)} className="w-full mt-2 text-xs font-semibold bg-[#16233D] text-white rounded-lg py-2 hover:brightness-110">Agregar</button>
+                  )}
+                </div>
               </div>
-              <div className="p-2.5">
-                <p className="text-sm font-medium text-slate-800 leading-tight">{p.nombre}</p>
-                {p.descripcion && <p className="text-[11px] text-slate-400 mt-0.5 line-clamp-2">{p.descripcion}</p>}
-                <p className="text-sm font-bold text-[#16233D] mt-1.5">{formatMonedaPublico(p.precio, moneda)}</p>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
+      </div>
+
+      {totalItems > 0 && (
+        <button onClick={() => setCarritoAbierto(true)} className="fixed bottom-4 inset-x-4 max-w-md mx-auto bg-[#16233D] text-white rounded-xl py-3.5 px-5 shadow-lg flex items-center justify-between z-30">
+          <span className="text-sm font-semibold">🛒 Ver carrito ({totalItems})</span>
+          <span className="text-sm font-bold">{formatMonedaPublico(totalCarrito, moneda)}</span>
+        </button>
+      )}
+
+      {imagenZoom && (
+        <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4" onClick={() => setImagenZoom(null)}>
+          <img src={imagenZoom.src} alt={imagenZoom.alt} className="max-w-full max-h-full object-contain" />
+          <button onClick={() => setImagenZoom(null)} className="absolute top-4 right-4 text-white text-3xl leading-none">✕</button>
+        </div>
+      )}
+
+      <ModalCarritoPublico
+        abierto={carritoAbierto}
+        items={itemsCarrito}
+        moneda={moneda}
+        total={totalCarrito}
+        onCambiarCantidad={cambiarCantidad}
+        onCerrar={() => setCarritoAbierto(false)}
+        onPedir={() => { setCarritoAbierto(false); setCheckoutAbierto(true); }}
+      />
+
+      <ModalCheckoutPublico
+        abierto={checkoutAbierto}
+        items={itemsCarrito}
+        moneda={moneda}
+        total={totalCarrito}
+        nombreNegocio={nombreNegocio}
+        whatsappNegocio={whatsappNegocio}
+        onCerrar={() => setCheckoutAbierto(false)}
+        onPedidoEnviado={() => { setCarrito({}); setCheckoutAbierto(false); }}
+      />
+    </div>
+  );
+}
+
+// Carrito: solo agregar/quitar/ver, vive mientras el visitante no lo vacíe o no cierre el pedido.
+function ModalCarritoPublico({ abierto, items, moneda, total, onCambiarCantidad, onCerrar, onPedir }) {
+  if (!abierto) return null;
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50" onClick={onCerrar}>
+      <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-sm max-h-[85vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-semibold text-slate-800 font-display">Tu carrito</h2>
+          <button onClick={onCerrar} className="text-slate-400 text-xl leading-none">✕</button>
+        </div>
+        {items.length === 0 ? (
+          <p className="text-sm text-slate-400 py-6 text-center">Todavía no agregaste nada.</p>
+        ) : (
+          <div className="space-y-3 mb-4">
+            {items.map((it) => (
+              <div key={it.producto.producto_id} className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-lg bg-slate-100 shrink-0 overflow-hidden">
+                  {it.producto.imagen ? <img src={it.producto.imagen} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-slate-300">📦</div>}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-slate-800 truncate">{it.producto.nombre}</p>
+                  <p className="text-xs text-slate-400">{formatMonedaPublico(it.producto.precio, moneda)} c/u</p>
+                </div>
+                <div className="flex items-center gap-2 bg-slate-50 rounded-lg shrink-0">
+                  <button onClick={() => onCambiarCantidad(it.producto, -1)} className="w-7 h-7 text-slate-600 font-bold">−</button>
+                  <span className="text-sm font-semibold w-4 text-center">{it.cantidad}</span>
+                  <button onClick={() => onCambiarCantidad(it.producto, 1)} className="w-7 h-7 text-slate-600 font-bold">+</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="flex items-center justify-between border-t border-slate-100 pt-3 mb-4">
+          <span className="text-sm font-semibold text-slate-600">Total</span>
+          <span className="text-lg font-bold text-[#16233D]">{formatMonedaPublico(total, moneda)}</span>
+        </div>
+        <button disabled={items.length === 0} onClick={onPedir} className="w-full px-4 py-3 rounded-lg bg-[#E3A73B] text-[#16233D] font-semibold text-sm disabled:opacity-50">Hacer pedido</button>
+      </div>
+    </div>
+  );
+}
+
+// Checkout: pide nombre y hora de retiro, arma el mensaje y abre WhatsApp con el pedido listo.
+// Igual que el resto de los avisos de Nova: nunca "envía" nada solo, el visitante lo manda desde su WhatsApp.
+function ModalCheckoutPublico({ abierto, items, moneda, total, nombreNegocio, whatsappNegocio, onCerrar, onPedidoEnviado }) {
+  const [nombre, setNombre] = useState("");
+  const [hora, setHora] = useState("");
+  const [notas, setNotas] = useState("");
+  useEffect(() => { if (abierto) { setNombre(""); setHora(""); setNotas(""); } }, [abierto]);
+  if (!abierto) return null;
+
+  const listo = nombre.trim() && hora.trim();
+
+  const enviarPedido = () => {
+    const lineas = items.map((it) => `• ${it.cantidad}x ${it.producto.nombre} — ${formatMonedaPublico(it.producto.precio * it.cantidad, moneda)}`).join("\n");
+    const mensaje = `🛍️ *Nuevo pedido — ${nombreNegocio}*\n\n${lineas}\n\n💰 Total: *${formatMonedaPublico(total, moneda)}*\n\n👤 Nombre: ${nombre.trim()}\n🕒 Hora a retirar: ${hora.trim()}${notas.trim() ? `\n📝 Notas: ${notas.trim()}` : ""}`;
+    const numeroLimpio = (whatsappNegocio || "").replace(/[^0-9]/g, "");
+    if (numeroLimpio) {
+      window.open(`https://wa.me/${numeroLimpio}?text=${encodeURIComponent(mensaje)}`, "_blank");
+      onPedidoEnviado();
+    } else {
+      mostrarError("Este negocio todavía no configuró su WhatsApp para recibir pedidos.");
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50" onClick={onCerrar}>
+      <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-t-2xl sm:rounded-2xl p-5 w-full sm:max-w-sm">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-semibold text-slate-800 font-display">Completá tu pedido</h2>
+          <button onClick={onCerrar} className="text-slate-400 text-xl leading-none">✕</button>
+        </div>
+        <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Tu nombre</label>
+        <input value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Ej. María López"
+          className="w-full px-3 py-2.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-700 outline-none focus:border-[#E3A73B] mb-3" />
+        <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Hora a retirar</label>
+        <input value={hora} onChange={(e) => setHora(e.target.value)} type="time"
+          className="w-full px-3 py-2.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-700 outline-none focus:border-[#E3A73B] mb-3" />
+        <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Notas (opcional)</label>
+        <textarea value={notas} onChange={(e) => setNotas(e.target.value)} rows={2} placeholder="Ej. sin cebolla, cambiar color, etc."
+          className="w-full px-3 py-2.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-700 outline-none focus:border-[#E3A73B] mb-4" />
+        <div className="flex items-center justify-between mb-4">
+          <span className="text-sm font-semibold text-slate-600">Total</span>
+          <span className="text-lg font-bold text-[#16233D]">{formatMonedaPublico(total, moneda)}</span>
+        </div>
+        <button disabled={!listo} onClick={enviarPedido} className="w-full px-4 py-3 rounded-lg bg-[#16233D] text-white font-semibold text-sm disabled:opacity-50">📤 Enviar pedido por WhatsApp</button>
+        <p className="text-[11px] text-slate-400 mt-2 text-center">Se abre WhatsApp con tu pedido ya escrito — solo tenés que tocar enviar.</p>
       </div>
     </div>
   );
@@ -6578,13 +6761,14 @@ function AppInterna({ sesion, onCerrarSesion }) {
   const [fotoPerfil, setFotoPerfil] = useState(null);
   const [reglasCredito, setReglasCredito] = useState(REGLAS_CREDITO_DEFAULT);
   const [tokenCatalogo, setTokenCatalogo] = useState(null);
+  const [whatsappNegocio, setWhatsappNegocio] = useState("");
   const cargaInicialRef = React.useRef(false);
 
   useEffect(() => {
     (async () => {
       try {
         const [config, perfil] = await Promise.all([supaApi.obtenerConfigNegocio(), supaApi.obtenerMiPerfil()]);
-        if (config) { setNombreNegocio(config.nombre || ""); setLogo(config.logo || null); establecerMonedaActual(config.moneda_codigo); setMoneda(monedaActualCache); if (config.reglas_credito) setReglasCredito({ ...REGLAS_CREDITO_DEFAULT, ...config.reglas_credito }); setTokenCatalogo(config.token_catalogo || null); }
+        if (config) { setNombreNegocio(config.nombre || ""); setLogo(config.logo || null); establecerMonedaActual(config.moneda_codigo); setMoneda(monedaActualCache); if (config.reglas_credito) setReglasCredito({ ...REGLAS_CREDITO_DEFAULT, ...config.reglas_credito }); setTokenCatalogo(config.token_catalogo || null); setWhatsappNegocio(config.whatsapp || ""); }
         if (!config?.token_catalogo) {
           supaApi.obtenerOCrearTokenCatalogo().then(setTokenCatalogo).catch(() => {});
         }
@@ -6605,6 +6789,15 @@ function AppInterna({ sesion, onCerrarSesion }) {
     }, 800);
     return () => clearTimeout(espera);
   }, [nombreNegocio]);
+
+  // WhatsApp del negocio: a dónde llegan los pedidos hechos desde el catálogo público.
+  useEffect(() => {
+    if (!cargaInicialRef.current) return;
+    const espera = setTimeout(() => {
+      supaApi.guardarConfigNegocio({ whatsapp: whatsappNegocio }).catch(() => {});
+    }, 800);
+    return () => clearTimeout(espera);
+  }, [whatsappNegocio]);
 
   // Moneda del negocio: a diferencia del nombre/logo, un cambio de moneda
   // se guarda al toque (sin debounce) y recarga la página, porque el
@@ -7276,7 +7469,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
     equipos: <PaginaEquipos equipos={equipos} asignaciones={asignacionesEquipos} productos={productos} cargando={cargandoEquipos} error={errorEquipos} puedeEditar={permisos.editar} onCrearEquipo={handleCrearEquipo} onEliminarEquipo={handleEliminarEquipo} onAsignar={handleAsignarEquipo} onQuitar={handleQuitarEquipo} onActualizarCantidad={handleActualizarCantidadEquipo} />,
     faltantes: <PaginaFaltantes faltantes={faltantes} proveedores={proveedores} cargando={cargandoFaltantes} error={errorFaltantes} puedeEditar={permisos.editar} onCrearFaltante={handleCrearFaltante} onMarcarFaltante={handleMarcarFaltante} onEliminarFaltante={handleEliminarFaltante} onCrearProveedor={handleCrearProveedor} onActualizarProveedor={handleActualizarProveedor} onEliminarProveedor={handleEliminarProveedor} />,
     usuarios: <PaginaUsuarios nombreNegocio={nombreNegocio} />,
-    configuracion: <PaginaConfiguracion nombreNegocio={nombreNegocio} setNombreNegocio={setNombreNegocio} logo={logo} onLogoChange={handleLogoChange} onQuitarLogo={quitarLogo} logoInputRef={logoInputRef} moneda={moneda} onMonedaChange={cambiarMoneda} cambiandoMoneda={cambiandoMoneda} tokenCatalogo={tokenCatalogo} />,
+    configuracion: <PaginaConfiguracion nombreNegocio={nombreNegocio} setNombreNegocio={setNombreNegocio} logo={logo} onLogoChange={handleLogoChange} onQuitarLogo={quitarLogo} logoInputRef={logoInputRef} moneda={moneda} onMonedaChange={cambiarMoneda} cambiandoMoneda={cambiandoMoneda} tokenCatalogo={tokenCatalogo} whatsappNegocio={whatsappNegocio} setWhatsappNegocio={setWhatsappNegocio} />,
   };
 
   return (
