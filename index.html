@@ -615,6 +615,18 @@ async function obtenerCuentaPublica(token) {
   return res.json();
 }
 
+// Catálogo público del negocio (sin sesión, por token) — muestra los
+// productos con su precio de venta únicamente, nunca el de costo.
+async function obtenerCatalogoPublico(token) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/catalogo_publico`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+    body: JSON.stringify({ p_token: token }),
+  });
+  if (!res.ok) throw new Error("No se pudo cargar el catálogo");
+  return res.json();
+}
+
 // Clave pública VAPID de Nova (segura de exponer; la privada solo vive en
 // la Edge Function del servidor). Necesaria para que el navegador del
 // cliente pueda suscribirse a notificaciones push.
@@ -2126,7 +2138,14 @@ function PanelProveedores({ proveedores, puedeEditar, onCrear, onActualizar, onE
   );
 }
 
-function PaginaConfiguracion({ nombreNegocio, setNombreNegocio, logo, onLogoChange, onQuitarLogo, logoInputRef, moneda, onMonedaChange, cambiandoMoneda }) {
+function PaginaConfiguracion({ nombreNegocio, setNombreNegocio, logo, onLogoChange, onQuitarLogo, logoInputRef, moneda, onMonedaChange, cambiandoMoneda, tokenCatalogo }) {
+  const linkCatalogo = tokenCatalogo ? `${window.location.origin}${window.location.pathname}#catalogo-${tokenCatalogo}` : null;
+  const copiarLinkCatalogo = async () => {
+    if (!linkCatalogo) return;
+    try { await navigator.clipboard.writeText(linkCatalogo); mostrarAviso("Link copiado."); }
+    catch (e) { mostrarError("No se pudo copiar. Mantené presionado el link para copiarlo a mano."); }
+  };
+
   return (
     <div className="max-w-xl">
       <h1 className="text-xl font-bold text-slate-800 dark:text-white font-display mb-1">Configuración del negocio</h1>
@@ -2150,7 +2169,7 @@ function PaginaConfiguracion({ nombreNegocio, setNombreNegocio, logo, onLogoChan
         <p className="text-[11px] text-slate-400 dark:text-white/40 mt-2">Todos los precios, ventas, caja, gastos e informes de este negocio se muestran en esta moneda. No convierte montos ya guardados: si cambiás de moneda, los números existentes se muestran tal cual, solo con el nuevo símbolo.</p>
       </div>
 
-      <div className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-white/10 rounded-2xl p-5">
+      <div className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-white/10 rounded-2xl p-5 mb-4">
         <label className="block text-xs font-semibold text-slate-500 dark:text-white/60 uppercase tracking-wide mb-3">Logo del negocio</label>
         <div className="flex items-center gap-4">
           <div className="w-16 h-16 rounded-xl overflow-hidden bg-[#16233D] flex items-center justify-center text-white font-bold text-xl shrink-0">
@@ -2162,6 +2181,26 @@ function PaginaConfiguracion({ nombreNegocio, setNombreNegocio, logo, onLogoChan
           </div>
         </div>
         <p className="text-[11px] text-slate-400 dark:text-white/40 mt-3">Se guarda en este dispositivo. La imagen se ajusta automáticamente, no importa el tamaño original.</p>
+      </div>
+
+      <div className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-white/10 rounded-2xl p-5">
+        <label className="block text-xs font-semibold text-slate-500 dark:text-white/60 uppercase tracking-wide mb-2">📦 Tu catálogo público</label>
+        <p className="text-[11px] text-slate-400 dark:text-white/40 mb-3">Todo lo que tengas en inventario aparece acá automáticamente, con foto, descripción y precio de venta (nunca el de costo). Mandá este link por WhatsApp o ponelo en tus redes.</p>
+        {linkCatalogo ? (
+          <div className="flex flex-col sm:flex-row gap-4 items-start">
+            <img src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(linkCatalogo)}`}
+              alt="Código QR del catálogo" className="w-32 h-32 rounded-lg border border-slate-200 dark:border-white/10 shrink-0" />
+            <div className="flex-1 min-w-0 w-full">
+              <p className="text-xs text-slate-600 dark:text-white/70 break-all bg-slate-50 dark:bg-black rounded-lg px-3 py-2 mb-2">{linkCatalogo}</p>
+              <div className="flex gap-2 flex-wrap">
+                <button onClick={copiarLinkCatalogo} className="text-xs font-semibold px-3 py-2 rounded-lg bg-[#16233D] text-white hover:brightness-110">📋 Copiar link</button>
+                <a href={linkCatalogo} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 text-slate-600 dark:text-white">👀 Ver catálogo</a>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <p className="text-xs text-slate-400">Cargando...</p>
+        )}
       </div>
     </div>
   );
@@ -2958,14 +2997,20 @@ function ModalNuevoFiado({ abierto, clientes, productos, clientePreseleccionado,
                     </select>
                     <button onClick={() => descartarNoResuelto(i)} className="text-rose-500 text-xs px-2">Descartar</button>
                   </div>
-                  <div className="flex items-center gap-1.5 mt-1.5">
-                    <span className="text-[11px] text-slate-500 dark:text-white/50 whitespace-nowrap">o fuera de inventario a</span>
-                    <input type="number" min="0" step="0.01" inputMode="decimal" placeholder="precio c/u"
-                      value={item.precioManual ?? (item.precio !== null ? (item.precio / item.cantidad).toFixed(2) : "")}
-                      onChange={(e) => actualizarPrecioNoResuelto(i, e.target.value)}
-                      className="w-20 px-1.5 py-1 rounded border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-xs text-slate-700 dark:text-white outline-none" />
-                    <button onClick={() => resolverComoExterno(i)} className="text-xs font-medium text-[#16233D] dark:text-[#E3A73B] underline">Agregar</button>
-                  </div>
+                  {item.precio !== null ? (
+                    <button onClick={() => resolverComoExterno(i)} className="w-full mt-1.5 text-xs font-medium text-[#16233D] dark:text-[#E3A73B] underline text-left">
+                      Agregar "{item.nombreCrudo}" fuera de inventario ({formatMoneda(item.precio)})
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-1.5 mt-1.5">
+                      <span className="text-[11px] text-slate-500 dark:text-white/50 whitespace-nowrap">o fuera de inventario a</span>
+                      <input type="number" min="0" step="0.01" inputMode="decimal" placeholder="precio c/u"
+                        value={item.precioManual ?? ""}
+                        onChange={(e) => actualizarPrecioNoResuelto(i, e.target.value)}
+                        className="w-20 px-1.5 py-1 rounded border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-xs text-slate-700 dark:text-white outline-none" />
+                      <button onClick={() => resolverComoExterno(i)} className="text-xs font-medium text-[#16233D] dark:text-[#E3A73B] underline">Agregar</button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -4890,7 +4935,7 @@ function ModalEditarEntrada({ entrada, onGuardar, onCerrar, guardando }) {
 }
 
 function ModalProducto({ abierto, producto, onGuardar, onCerrar, guardando, onActualizarProducto, onRecargarProductos }) {
-  const [form, setForm] = useState({ nombre: "", categoria: "", costo: "", venta: "", cantidad: "", minimo: "", unidades_por_caja: "", precio_caja: "" });
+  const [form, setForm] = useState({ nombre: "", categoria: "", descripcion: "", costo: "", venta: "", cantidad: "", minimo: "", unidades_por_caja: "", precio_caja: "" });
   const [modoCalculo, setModoCalculo] = useState("tradicional"); // "tradicional" | "margen"
   const [pctSeleccionado, setPctSeleccionado] = useState(30);
   const [pctOtro, setPctOtro] = useState("");
@@ -4902,7 +4947,7 @@ function ModalProducto({ abierto, producto, onGuardar, onCerrar, guardando, onAc
   useEffect(() => {
     if (producto) {
       setForm({
-        nombre: producto.nombre, categoria: producto.categoria || "", costo: producto.costo, venta: producto.venta,
+        nombre: producto.nombre, categoria: producto.categoria || "", descripcion: producto.descripcion || "", costo: producto.costo, venta: producto.venta,
         cantidad: producto.cantidad, minimo: producto.minimo,
         unidades_por_caja: producto.unidades_por_caja || "", precio_caja: producto.precio_caja || "",
       });
@@ -4910,7 +4955,7 @@ function ModalProducto({ abierto, producto, onGuardar, onCerrar, guardando, onAc
       setMostrarCaja(!!producto.unidades_por_caja || !!producto.precio_caja);
       setPrecioCajaManual(true);
     } else {
-      setForm({ nombre: "", categoria: "", costo: "", venta: "", cantidad: "", minimo: "", unidades_por_caja: "", precio_caja: "" });
+      setForm({ nombre: "", categoria: "", descripcion: "", costo: "", venta: "", cantidad: "", minimo: "", unidades_por_caja: "", precio_caja: "" });
       setVentaManual(false);
       setMostrarCaja(false);
       setPrecioCajaManual(false);
@@ -4981,6 +5026,16 @@ function ModalProducto({ abierto, producto, onGuardar, onCerrar, guardando, onAc
               type="text"
               value={form.categoria}
               onChange={(e) => setForm({ ...form, categoria: e.target.value })}
+              className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 dark:text-white uppercase mb-1">Descripción breve (para tu catálogo, opcional)</label>
+            <textarea
+              rows={2}
+              value={form.descripcion}
+              onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
+              placeholder='Ej: "Talla M, algodón 100%"'
               className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-black text-sm text-slate-700 dark:text-white outline-none focus:border-[#E3A73B]"
             />
           </div>
@@ -6093,6 +6148,70 @@ function formatMonedaPublico(valor, codigo) {
   return `${simboloMonedaPublico(codigo)}${(Number.isFinite(num) ? num : 0).toFixed(decimales)}`;
 }
 
+// Catálogo público del negocio: cualquiera con el link (o que escanee el QR)
+// ve los productos con foto, descripción y precio de venta — nunca el costo.
+function PaginaCatalogoPublico({ token }) {
+  const [productos, setProductos] = useState(undefined); // undefined = cargando
+  const [error, setError] = useState(null);
+  const [busqueda, setBusqueda] = useState("");
+
+  useEffect(() => {
+    obtenerCatalogoPublico(token)
+      .then((filas) => setProductos(filas || []))
+      .catch((e) => setError(e.message));
+  }, [token]);
+
+  const info = productos && productos[0];
+  const nombreNegocio = info?.negocio_nombre || "Catálogo";
+  const logo = info?.negocio_logo;
+  const moneda = info?.moneda_codigo;
+  const termino = busqueda.trim().toLowerCase();
+  const filtrados = (productos || []).filter((p) => !termino || p.nombre.toLowerCase().includes(termino));
+
+  return (
+    <div className="min-h-screen bg-slate-50">
+      <div className="bg-[#16233D] px-4 pt-8 pb-6 text-center">
+        {logo ? (
+          <img src={logo} alt={nombreNegocio} className="w-16 h-16 rounded-full object-cover mx-auto mb-2 border-2 border-white/20" />
+        ) : (
+          <div className="w-16 h-16 rounded-full bg-white/10 mx-auto mb-2 flex items-center justify-center text-2xl">🛍️</div>
+        )}
+        <h1 className="text-white font-semibold text-lg font-display">{nombreNegocio}</h1>
+        <p className="text-white/50 text-xs mt-0.5">Catálogo de productos</p>
+      </div>
+
+      <div className="max-w-md mx-auto px-4 -mt-3">
+        <input value={busqueda} onChange={(e) => setBusqueda(e.target.value)} placeholder="Buscar producto..."
+          className="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-white text-sm text-slate-700 outline-none shadow-sm focus:border-[#E3A73B] mb-4" />
+
+        {productos === undefined && !error && <p className="text-center text-sm text-slate-400 py-10">Cargando catálogo...</p>}
+        {error && <div className="bg-rose-50 border border-rose-200 text-rose-600 text-sm rounded-xl p-4 text-center">{error}</div>}
+        {productos && productos.length === 0 && <p className="text-center text-sm text-slate-400 py-10">Todavía no hay productos en el catálogo.</p>}
+        {productos && productos.length > 0 && filtrados.length === 0 && <p className="text-center text-sm text-slate-400 py-10">Nada coincide con "{busqueda}".</p>}
+
+        <div className="grid grid-cols-2 gap-3 pb-10">
+          {filtrados.map((p) => (
+            <div key={p.producto_id} className="bg-white rounded-xl overflow-hidden shadow-sm border border-slate-100">
+              <div className="aspect-square bg-slate-100">
+                {p.imagen ? (
+                  <img src={p.imagen} alt={p.nombre} className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-3xl text-slate-300">📦</div>
+                )}
+              </div>
+              <div className="p-2.5">
+                <p className="text-sm font-medium text-slate-800 leading-tight">{p.nombre}</p>
+                {p.descripcion && <p className="text-[11px] text-slate-400 mt-0.5 line-clamp-2">{p.descripcion}</p>}
+                <p className="text-sm font-bold text-[#16233D] mt-1.5">{formatMonedaPublico(p.precio, moneda)}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PaginaCuentaPublica({ token }) {
   const [datos, setDatos] = useState(undefined); // undefined = cargando
   const [error, setError] = useState(null);
@@ -6292,6 +6411,14 @@ function App() {
     return <PaginaCuentaPublica token={tokenPublico} />;
   }
 
+  const [tokenCatalogo] = useState(() => {
+    const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
+    return hash.startsWith("catalogo-") ? hash.slice(9) : null;
+  });
+  if (tokenCatalogo) {
+    return <PaginaCatalogoPublico token={tokenCatalogo} />;
+  }
+
   const [tokenRecuperacion] = useState(() => {
     const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
     const params = new URLSearchParams(hash);
@@ -6394,13 +6521,14 @@ function AppInterna({ sesion, onCerrarSesion }) {
   });
   const [fotoPerfil, setFotoPerfil] = useState(null);
   const [reglasCredito, setReglasCredito] = useState(REGLAS_CREDITO_DEFAULT);
+  const [tokenCatalogo, setTokenCatalogo] = useState(null);
   const cargaInicialRef = React.useRef(false);
 
   useEffect(() => {
     (async () => {
       try {
         const [config, perfil] = await Promise.all([supaApi.obtenerConfigNegocio(), supaApi.obtenerMiPerfil()]);
-        if (config) { setNombreNegocio(config.nombre || ""); setLogo(config.logo || null); establecerMonedaActual(config.moneda_codigo); setMoneda(monedaActualCache); if (config.reglas_credito) setReglasCredito({ ...REGLAS_CREDITO_DEFAULT, ...config.reglas_credito }); }
+        if (config) { setNombreNegocio(config.nombre || ""); setLogo(config.logo || null); establecerMonedaActual(config.moneda_codigo); setMoneda(monedaActualCache); if (config.reglas_credito) setReglasCredito({ ...REGLAS_CREDITO_DEFAULT, ...config.reglas_credito }); setTokenCatalogo(config.token_catalogo || null); }
         if (perfil) {
           if (perfil.nombre) setNombreUsuario(perfil.nombre);
           setFotoPerfil(perfil.foto || null);
@@ -7089,7 +7217,7 @@ function AppInterna({ sesion, onCerrarSesion }) {
     equipos: <PaginaEquipos equipos={equipos} asignaciones={asignacionesEquipos} productos={productos} cargando={cargandoEquipos} error={errorEquipos} puedeEditar={permisos.editar} onCrearEquipo={handleCrearEquipo} onEliminarEquipo={handleEliminarEquipo} onAsignar={handleAsignarEquipo} onQuitar={handleQuitarEquipo} onActualizarCantidad={handleActualizarCantidadEquipo} />,
     faltantes: <PaginaFaltantes faltantes={faltantes} proveedores={proveedores} cargando={cargandoFaltantes} error={errorFaltantes} puedeEditar={permisos.editar} onCrearFaltante={handleCrearFaltante} onMarcarFaltante={handleMarcarFaltante} onEliminarFaltante={handleEliminarFaltante} onCrearProveedor={handleCrearProveedor} onActualizarProveedor={handleActualizarProveedor} onEliminarProveedor={handleEliminarProveedor} />,
     usuarios: <PaginaUsuarios nombreNegocio={nombreNegocio} />,
-    configuracion: <PaginaConfiguracion nombreNegocio={nombreNegocio} setNombreNegocio={setNombreNegocio} logo={logo} onLogoChange={handleLogoChange} onQuitarLogo={quitarLogo} logoInputRef={logoInputRef} moneda={moneda} onMonedaChange={cambiarMoneda} cambiandoMoneda={cambiandoMoneda} />,
+    configuracion: <PaginaConfiguracion nombreNegocio={nombreNegocio} setNombreNegocio={setNombreNegocio} logo={logo} onLogoChange={handleLogoChange} onQuitarLogo={quitarLogo} logoInputRef={logoInputRef} moneda={moneda} onMonedaChange={cambiarMoneda} cambiandoMoneda={cambiandoMoneda} tokenCatalogo={tokenCatalogo} />,
   };
 
   return (
