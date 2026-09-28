@@ -1013,6 +1013,24 @@ const supaApi = {
     return nuevoToken;
   },
 
+  // Igual que arriba pero para el catálogo público del negocio (no de un cliente puntual).
+  // Si el negocio todavía no tiene token_catalogo asignado (o ni siquiera tiene fila de configuración), lo genera y lo guarda.
+  async obtenerOCrearTokenCatalogo() {
+    const negocioId = await obtenerMiNegocioId();
+    const res = await peticionApi(`${SUPABASE_URL}/rest/v1/negocio_config?negocio_id=eq.${negocioId}&select=token_catalogo&limit=1`);
+    if (!res.ok) throw new Error("No se pudo obtener el link del catálogo");
+    const [actual] = await res.json();
+    if (actual?.token_catalogo) return actual.token_catalogo;
+    const nuevoToken = crypto.randomUUID();
+    const res2 = await peticionApi(`${SUPABASE_URL}/rest/v1/negocio_config?on_conflict=negocio_id`, {
+      method: "POST",
+      extraHeaders: { Prefer: "resolution=merge-duplicates,return=representation" },
+      body: JSON.stringify({ negocio_id: negocioId, token_catalogo: nuevoToken }),
+    });
+    if (!res2.ok) throw new Error("No se pudo generar el link del catálogo");
+    return nuevoToken;
+  },
+
   // --- Mensajes directos a clientes (bloqueo de crédito, recordatorios, etc.) ---
   async listarMensajesCliente(clienteId) {
     const negocioId = await obtenerMiNegocioId();
@@ -6567,6 +6585,9 @@ function AppInterna({ sesion, onCerrarSesion }) {
       try {
         const [config, perfil] = await Promise.all([supaApi.obtenerConfigNegocio(), supaApi.obtenerMiPerfil()]);
         if (config) { setNombreNegocio(config.nombre || ""); setLogo(config.logo || null); establecerMonedaActual(config.moneda_codigo); setMoneda(monedaActualCache); if (config.reglas_credito) setReglasCredito({ ...REGLAS_CREDITO_DEFAULT, ...config.reglas_credito }); setTokenCatalogo(config.token_catalogo || null); }
+        if (!config?.token_catalogo) {
+          supaApi.obtenerOCrearTokenCatalogo().then(setTokenCatalogo).catch(() => {});
+        }
         if (perfil) {
           if (perfil.nombre) setNombreUsuario(perfil.nombre);
           setFotoPerfil(perfil.foto || null);
