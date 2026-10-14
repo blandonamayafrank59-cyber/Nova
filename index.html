@@ -2715,7 +2715,7 @@ function ModalDetallePedido({ pedido, moneda, onCerrar, onActualizado }) {
 }
 
 function PaginaConfiguracion({ nombreNegocio, setNombreNegocio, logo, onLogoChange, onQuitarLogo, logoInputRef, moneda, onMonedaChange, cambiandoMoneda, tokenCatalogo, whatsappNegocio, setWhatsappNegocio }) {
-  const linkCatalogo = tokenCatalogo ? `${window.location.origin}${window.location.pathname}#catalogo-${tokenCatalogo}` : null;
+  const linkCatalogo = tokenCatalogo ? `${window.location.origin}${window.location.pathname}?catalogo=${tokenCatalogo}` : null;
   const copiarLinkCatalogo = async () => {
     if (!linkCatalogo) return;
     try { await navigator.clipboard.writeText(linkCatalogo); mostrarAviso("Link copiado."); }
@@ -7226,6 +7226,11 @@ function App() {
   }
 
   const [tokenCatalogo] = useState(() => {
+    // Formato nuevo: ?catalogo=TOKEN (compatible con WhatsApp, sin #).
+    const porQuery = new URLSearchParams(window.location.search).get("catalogo");
+    if (porQuery) return porQuery;
+    // Formato viejo (#catalogo-TOKEN): se sigue reconociendo por si alguien
+    // todavía tiene guardado o compartido un link con ese formato anterior.
     const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
     return hash.startsWith("catalogo-") ? hash.slice(9) : null;
   });
