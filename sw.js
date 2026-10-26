@@ -1,21 +1,24 @@
 // Service Worker de Nova.
 //
-// IMPORTANTE sobre la estrategia de caché (para el propio Claude, si esto
-// se vuelve a tocar en el futuro):
+// Notas para quien toque esto después:
 // - El HTML de la app (index.html / "/") usa "red primero": siempre intenta
-//   traer la versión más nueva del servidor, y solo si no hay conexión usa
-//   la última copia guardada. Así, cada vez que Claude publique un cambio,
-//   el negocio lo ve apenas tenga señal -- nunca se queda pegado en una
-//   versión vieja para siempre (ese fue un bug real que causó horas de
-//   confusión: parecía que los arreglos "no llegaban").
-// - Las librerías (React, Tailwind, Chart.js, fuentes) sí usan "caché
-//   primero", porque esas casi no cambian y así la app abre más rápido.
+//   la versión más nueva, y solo si no hay conexión usa la última copia
+//   guardada. Así nunca se queda pegado en una versión vieja para siempre.
+// - Las librerías externas (React, Tailwind, Chart.js, fuentes) se guardan
+//   con fetch en modo "no-cors" explícito -- NO alcanza con cache.add(url)
+//   a secas para recursos de otro sitio, porque por defecto pide el modo
+//   "cors" y varios CDNs (Tailwind entre ellos) lo rechazan; eso hacía que
+//   se guardaran en silencio pero fallaran, y la app offline se viera sin
+//   ningún estilo (todo en texto plano, botones sueltos). Con no-cors sí
+//   se guardan bien, aunque la respuesta quede "opaca" (no se puede leer
+//   su contenido desde JS, pero el navegador sí la puede ejecutar/aplicar
+//   normalmente, que es lo único que hace falta acá).
 //
 // Dos trabajos en total:
-// 1) Guardar una copia de la app para poder ABRIRLA sin internet.
+// 1) Guardar una copia de la app para poder ABRIRLA sin internet, CON estilos.
 // 2) Mostrar las notificaciones push a los clientes con fiado.
 
-const CACHE_NAME = "nova-shell-v3";
+const CACHE_NAME = "nova-shell-v4";
 const SUPABASE_HOST = "fgfobmrhgcztvjaagxvu.supabase.co";
 const RECURSOS_LIBRERIAS = [
   "https://cdn.tailwindcss.com",
@@ -28,14 +31,23 @@ const RECURSOS_LIBRERIAS = [
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) =>
-      Promise.all([
-        cache.add("./").catch(() => {}),
-        cache.add("./index.html").catch(() => {}),
-        cache.add("./manifest.json").catch(() => {}),
-        ...RECURSOS_LIBRERIAS.map((url) => cache.add(url).catch(() => {})),
-      ])
-    )
+    (async () => {
+      const cache = await caches.open(CACHE_NAME);
+      await cache.add("./").catch(() => {});
+      await cache.add("./index.html").catch(() => {});
+      await cache.add("./manifest.json").catch(() => {});
+      // Cada librería se guarda por separado y en modo no-cors, para que
+      // el rechazo de UNA no arruine el resto -- y para que de verdad
+      // quede guardada y no falle en silencio como antes.
+      await Promise.all(
+        RECURSOS_LIBRERIAS.map(async (url) => {
+          try {
+            const respuesta = await fetch(url, { mode: "no-cors", cache: "reload" });
+            await cache.put(url, respuesta);
+          } catch (e) { /* esa librería puntual queda sin cachear, no bloquea el resto */ }
+        })
+      );
+    })()
   );
   self.skipWaiting();
 });
@@ -53,17 +65,12 @@ self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
 
   const url = new URL(event.request.url);
-
-  // La base de datos nunca pasa por acá -- eso ya lo maneja el propio
-  // código de Nova con su sistema de guardado local.
   if (url.hostname.includes(SUPABASE_HOST)) return;
 
   const esNavegacion = event.request.mode === "navigate";
   const esElHtmlPrincipal = esNavegacion || url.pathname === "/" || url.pathname.endsWith("/index.html");
 
   if (esElHtmlPrincipal) {
-    // RED PRIMERO: siempre busca la versión más nueva. Solo si no hay
-    // conexión (o el servidor no contesta) usa la última copia guardada.
     event.respondWith(
       fetch(event.request)
         .then((respuesta) => {
@@ -78,20 +85,22 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Todo lo demás (librerías, fuentes): caché primero, y se actualiza
-  // solo en segundo plano -- no cambian seguido, priorizamos velocidad.
   event.respondWith(
     caches.match(event.request).then((cacheado) => {
-      const desdeRed = fetch(event.request)
-        .then((respuesta) => {
-          if (respuesta && respuesta.status === 200) {
-            const copia = respuesta.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copia)).catch(() => {});
-          }
-          return respuesta;
-        })
-        .catch(() => cacheado);
-      return cacheado || desdeRed;
+      if (cacheado) {
+        // Ya hay copia guardada: se muestra al toque, y de paso se intenta
+        // refrescar en segundo plano (en modo no-cors para los recursos
+        // externos, igual que en la instalación).
+        fetch(event.request, { mode: event.request.mode === "cors" ? "cors" : "no-cors" })
+          .then((resp) => caches.open(CACHE_NAME).then((cache) => cache.put(event.request, resp)))
+          .catch(() => {});
+        return cacheado;
+      }
+      return fetch(event.request).then((respuesta) => {
+        const copia = respuesta.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copia)).catch(() => {});
+        return respuesta;
+      });
     })
   );
 });
