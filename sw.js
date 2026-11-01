@@ -1,27 +1,23 @@
 // Service Worker de Nova.
 //
 // Notas para quien toque esto después:
+// - Tailwind YA NO se carga desde ningún CDN -- el CSS quedó compilado e
+//   incrustado directo en index.html (ver el comentario ahí). Por eso ya
+//   no aparece en la lista de abajo: no hace falta guardarlo porque va
+//   siempre pegado al propio HTML.
 // - El HTML de la app (index.html / "/") usa "red primero": siempre intenta
 //   la versión más nueva, y solo si no hay conexión usa la última copia
 //   guardada. Así nunca se queda pegado en una versión vieja para siempre.
-// - Las librerías externas (React, Tailwind, Chart.js, fuentes) se guardan
-//   con fetch en modo "no-cors" explícito -- NO alcanza con cache.add(url)
-//   a secas para recursos de otro sitio, porque por defecto pide el modo
-//   "cors" y varios CDNs (Tailwind entre ellos) lo rechazan; eso hacía que
-//   se guardaran en silencio pero fallaran, y la app offline se viera sin
-//   ningún estilo (todo en texto plano, botones sueltos). Con no-cors sí
-//   se guardan bien, aunque la respuesta quede "opaca" (no se puede leer
-//   su contenido desde JS, pero el navegador sí la puede ejecutar/aplicar
-//   normalmente, que es lo único que hace falta acá).
+// - Las demás librerías externas (React, Babel, Chart.js, fuentes) se
+//   guardan con fetch en modo "no-cors" explícito durante la instalación.
 //
 // Dos trabajos en total:
 // 1) Guardar una copia de la app para poder ABRIRLA sin internet, CON estilos.
 // 2) Mostrar las notificaciones push a los clientes con fiado.
 
-const CACHE_NAME = "nova-shell-v4";
+const CACHE_NAME = "nova-shell-v5";
 const SUPABASE_HOST = "fgfobmrhgcztvjaagxvu.supabase.co";
 const RECURSOS_LIBRERIAS = [
-  "https://cdn.tailwindcss.com",
   "https://unpkg.com/react@18.3.1/umd/react.production.min.js",
   "https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js",
   "https://unpkg.com/@babel/standalone@7.25.6/babel.min.js",
@@ -36,9 +32,6 @@ self.addEventListener("install", (event) => {
       await cache.add("./").catch(() => {});
       await cache.add("./index.html").catch(() => {});
       await cache.add("./manifest.json").catch(() => {});
-      // Cada librería se guarda por separado y en modo no-cors, para que
-      // el rechazo de UNA no arruine el resto -- y para que de verdad
-      // quede guardada y no falle en silencio como antes.
       await Promise.all(
         RECURSOS_LIBRERIAS.map(async (url) => {
           try {
@@ -88,9 +81,6 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(
     caches.match(event.request).then((cacheado) => {
       if (cacheado) {
-        // Ya hay copia guardada: se muestra al toque, y de paso se intenta
-        // refrescar en segundo plano (en modo no-cors para los recursos
-        // externos, igual que en la instalación).
         fetch(event.request, { mode: event.request.mode === "cors" ? "cors" : "no-cors" })
           .then((resp) => caches.open(CACHE_NAME).then((cache) => cache.put(event.request, resp)))
           .catch(() => {});
