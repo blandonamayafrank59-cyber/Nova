@@ -5190,6 +5190,15 @@ const ICONOS_HISTORIAL = { aviso: "🔔", cambio_estado: "🔒", comision: "💸
 // El abono es el límite del ciclo: no se crea una cuenta nueva hasta que
 // exista una compra posterior a ese abono. Los registros originales se
 // conservan para que editar/eliminar una compra siga funcionando.
+// El monto abonado visible se deriva del total menos el saldo pendiente.
+// Así la pantalla no invierte Abonado/Pendiente ni depende de aplicaciones
+// incompletas o desactualizadas.
+function calcularAbonadoVisible(cuenta) {
+  const total = Math.max(0, Number(cuenta?.total) || 0);
+  const pendiente = Math.max(0, Number(cuenta?.saldo_pendiente) || 0);
+  return Math.min(total, Math.max(0, total - pendiente));
+}
+
 function agruparCuentasFiadoPorAbonos(cuentas = [], pagos = [], campoAbonos = "pagos_fiado_aplicaciones") {
   const historicas = (cuentas || []).filter(c => c.es_historica).map(c => ({
     ...c,
@@ -5294,7 +5303,7 @@ function ModalHistorialCliente({ abierto, cliente, pagos, onCerrar, onEditarFiad
         <div className="space-y-2 mb-5">
           {agruparCuentasFiadoPorAbonos(cuentas, pagosCliente).map((cuenta) => {
             const abonosCuenta = cuenta.abonosCuenta || [];
-            const abonado = abonosCuenta.reduce((sum, a) => sum + (Number(a.monto) || 0), 0);
+            const abonado = calcularAbonadoVisible(cuenta);
             const comprasOriginales = (cuenta.cuentasOrigen || []).map(origen => fiados.find(f => f.id === origen.fiado_id)).filter(Boolean);
             return (
               <div key={cuenta.id} className="bg-slate-50 dark:bg-neutral-900 rounded-lg p-3">
@@ -9040,7 +9049,7 @@ function PaginaCuentaPublica({ token }) {
                 <div className="space-y-3">
                   {agruparCuentasFiadoPorAbonos(datos.cuentas || [], datos.pagos || [], "abonos").map((cuenta) => {
                     const abonosCuenta = cuenta.abonosCuenta || [];
-                    const abonado = abonosCuenta.reduce((sum, a) => sum + (Number(a.monto) || 0), 0);
+                    const abonado = calcularAbonadoVisible(cuenta);
                     return (
                       <div key={cuenta.id} className="rounded-xl border border-slate-100 p-3">
                         <div className="flex items-start justify-between gap-2">
