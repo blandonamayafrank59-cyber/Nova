@@ -8976,11 +8976,13 @@ function PaginaCuentaPublica({ token }) {
                     const abonado = (cuenta.abonos || []).reduce((suma, abono) => suma + (Number(abono.monto) || 0), 0);
                     const pendiente = Math.max(0, Number(cuenta.saldo_pendiente) || 0);
                     const pagada = pendiente <= 0;
+                    // Numeración visible independiente para cada cliente; no usar el ID global de la base de datos.
+                    const numeroFiado = (datos.cuentas || []).slice(0, i + 1).filter(c => !c.es_historica).length;
                     return (
                       <div key={cuenta.id || i} className="rounded-xl border border-slate-100 p-3">
                         <div className="flex items-start justify-between gap-2">
                           <div>
-                            <p className="text-xs font-bold text-[#16233D]">{cuenta.es_historica ? "Saldo anterior" : `Fiado #${cuenta.numero || i + 1}`}</p>
+                            <p className="text-xs font-bold text-[#16233D]">{cuenta.es_historica ? "Saldo anterior" : `Fiado #${numeroFiado}`}</p>
                             <p className="text-[11px] text-slate-400 mt-0.5">{fechaCorta(cuenta.creado_en)}</p>
                             {cuenta.descripcion && <p className="text-xs text-slate-500 mt-1">{cuenta.descripcion}</p>}
                           </div>
