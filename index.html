@@ -5186,6 +5186,56 @@ function ModalEditarFiado({ fiado, productos, onGuardar, onCerrar, guardando }) 
 
 const ICONOS_HISTORIAL = { aviso: "🔔", cambio_estado: "🔒", comision: "💸", clasificacion: "🏷️" };
 
+// Agrupa todas las compras realizadas entre un abono y el siguiente.
+// El abono es el límite del ciclo: no se crea una cuenta nueva hasta que
+// exista una compra posterior a ese abono. Los registros originales se
+// conservan para que editar/eliminar una compra siga funcionando.
+function agruparCuentasFiadoPorAbonos(cuentas = [], pagos = [], campoAbonos = "pagos_fiado_aplicaciones") {
+  const historicas = (cuentas || []).filter(c => c.es_historica).map(c => ({
+    ...c,
+    numeroCliente: null,
+    cuentasOrigen: [c],
+    abonosCuenta: c[campoAbonos] || c.abonos || [],
+  }));
+  const compras = (cuentas || []).filter(c => !c.es_historica).slice().sort((a, b) =>
+    new Date(a.creado_en).getTime() - new Date(b.creado_en).getTime() || Number(a.numero || 0) - Number(b.numero || 0)
+  );
+  const fechasAbonos = (pagos || []).map(p => new Date(p.creado_en).getTime()).filter(Number.isFinite).sort((a, b) => a - b);
+  const ciclos = [];
+  let ciclo = null;
+  let fechaCompraAnterior = null;
+
+  for (const compra of compras) {
+    const fechaCompra = new Date(compra.creado_en).getTime();
+    const huboAbono = fechaCompraAnterior !== null && fechasAbonos.some(fecha => fecha > fechaCompraAnterior && fecha <= fechaCompra);
+    if (!ciclo || huboAbono) {
+      ciclo = {
+        id: `ciclo-${compra.id}`,
+        es_historica: false,
+        creado_en: compra.creado_en,
+        ultima_compra_en: compra.creado_en,
+        total: 0,
+        saldo_pendiente: 0,
+        productos: [],
+        cuentasOrigen: [],
+        abonosCuenta: [],
+      };
+      ciclos.push(ciclo);
+    }
+    ciclo.cuentasOrigen.push(compra);
+    ciclo.total += Number(compra.total) || 0;
+    ciclo.saldo_pendiente += Number(compra.saldo_pendiente) || 0;
+    ciclo.productos.push(...(Array.isArray(compra.productos) ? compra.productos : []));
+    ciclo.abonosCuenta.push(...(compra[campoAbonos] || compra.abonos || []));
+    ciclo.ultima_compra_en = compra.creado_en;
+    fechaCompraAnterior = fechaCompra;
+  }
+
+  ciclos.forEach((c, i) => { c.numeroCliente = i + 1; });
+  const resultado = [...ciclos.slice().reverse(), ...historicas];
+  return resultado;
+}
+
 function ModalHistorialCliente({ abierto, cliente, pagos, onCerrar, onEditarFiado, onEliminarFiado }) {
   const [fiados, setFiados] = useState([]);
   const [cuentas, setCuentas] = useState([]);
@@ -5242,22 +5292,20 @@ function ModalHistorialCliente({ abierto, cliente, pagos, onCerrar, onEditarFiad
         <h3 className="text-xs font-semibold text-slate-500 dark:text-white/60 uppercase tracking-wide mb-2">Mis cuentas de fiado</h3>
         {cargando && <p className="text-sm text-slate-400 py-2">Cargando...</p>}
         <div className="space-y-2 mb-5">
-          {[...cuentas].sort((a, b) => new Date(a.creado_en) - new Date(b.creado_en) || Number(a.numero) - Number(b.numero)).map((cuenta, i, lista) => {
-            const numeroCliente = lista.slice(0, i + 1).filter(c => !c.es_historica).length;
-            const abonosCuenta = cuenta.pagos_fiado_aplicaciones || [];
+          {agruparCuentasFiadoPorAbonos(cuentas, pagosCliente).map((cuenta) => {
+            const abonosCuenta = cuenta.abonosCuenta || [];
             const abonado = abonosCuenta.reduce((sum, a) => sum + (Number(a.monto) || 0), 0);
-            const fiadoOriginal = fiados.find(f => f.id === cuenta.fiado_id);
+            const comprasOriginales = (cuenta.cuentasOrigen || []).map(origen => fiados.find(f => f.id === origen.fiado_id)).filter(Boolean);
             return (
               <div key={cuenta.id} className="bg-slate-50 dark:bg-neutral-900 rounded-lg p-3">
                 <div className="flex items-center justify-between gap-2 text-sm mb-1">
-                  <span className="font-semibold text-slate-700 dark:text-white">{cuenta.es_historica ? "Saldo anterior" : `Fiado #${numeroCliente}`}</span>
+                  <span className="font-semibold text-slate-700 dark:text-white">{cuenta.es_historica ? "Saldo anterior" : `Fiado #${cuenta.numeroCliente}`}</span>
                   <span className={`text-[11px] font-semibold rounded-full px-2 py-1 ${Number(cuenta.saldo_pendiente) <= 0 ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{Number(cuenta.saldo_pendiente) <= 0 ? "Pagada" : "Pendiente"}</span>
                 </div>
                 <div className="flex items-center justify-between text-xs text-slate-400 dark:text-white/40">
-                  <span>{new Date(cuenta.creado_en).toLocaleString()}</span>
+                  <span>{new Date(cuenta.creado_en).toLocaleString()}{cuenta.ultima_compra_en && cuenta.ultima_compra_en !== cuenta.creado_en ? ` · última compra ${new Date(cuenta.ultima_compra_en).toLocaleString()}` : ""}</span>
                   <span>{formatMoneda(Number(cuenta.total).toFixed(2))}</span>
                 </div>
-                {cuenta.descripcion && <div className="text-xs text-slate-500 dark:text-white/60 mt-1">{cuenta.descripcion}</div>}
                 <div className="text-xs text-slate-500 dark:text-white/60 mt-1 mb-2">{(cuenta.productos || []).map(p => `${p.nombre} x${p.cantidad}`).join(", ") || "Sin productos"}</div>
                 <div className="grid grid-cols-3 gap-2 border-t border-slate-200 dark:border-white/10 pt-2 text-xs">
                   <div><div className="text-slate-400">Total</div><strong className="text-slate-700 dark:text-white">{formatMoneda(Number(cuenta.total).toFixed(2))}</strong></div>
@@ -5265,10 +5313,7 @@ function ModalHistorialCliente({ abierto, cliente, pagos, onCerrar, onEditarFiad
                   <div><div className="text-slate-400">Pendiente</div><strong className="text-slate-700 dark:text-white">{formatMoneda(Number(cuenta.saldo_pendiente).toFixed(2))}</strong></div>
                 </div>
                 {abonosCuenta.length > 0 && <div className="mt-2 text-[11px] text-slate-400">Abonos aplicados: {abonosCuenta.map(a => `${formatMoneda(Number(a.monto).toFixed(2))} · ${new Date(a.creado_en).toLocaleDateString()}`).join("; ")}</div>}
-                {fiadoOriginal && <div className="flex gap-2 mt-2">
-                  <button onClick={() => setFiadoEditando(fiadoOriginal)} className="text-xs px-2.5 py-1 rounded border border-slate-200 dark:border-white/20 text-slate-600 dark:text-white">✏️ Editar</button>
-                  <button onClick={() => eliminar(fiadoOriginal)} className="text-xs px-2.5 py-1 rounded border border-rose-200 dark:border-rose-900/30 text-rose-500">🗑️ Eliminar</button>
-                </div>}
+                {comprasOriginales.length > 0 && <div className="mt-2 space-y-1 border-t border-slate-200 dark:border-white/10 pt-2">{comprasOriginales.map((f, i) => <div key={f.id} className="flex items-center justify-between gap-2 text-[11px]"><span className="text-slate-400">Compra {i + 1}</span><div className="flex gap-2"><button onClick={() => setFiadoEditando(f)} className="text-xs px-2 py-1 rounded border border-slate-200 dark:border-white/20 text-slate-600 dark:text-white">✏️ Editar</button><button onClick={() => eliminar(f)} className="text-xs px-2 py-1 rounded border border-rose-200 dark:border-rose-900/30 text-rose-500">🗑️ Eliminar</button></div></div>)}</div>}
               </div>
             );
           })}
@@ -8989,24 +9034,22 @@ function PaginaCuentaPublica({ token }) {
             <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4">
               <div className="flex items-center justify-between mb-3">
                 <h2 className="font-semibold text-slate-800 text-sm">Mis cuentas de fiado</h2>
-                <span className="text-xs text-slate-400">{(datos.cuentas || []).length} cuentas</span>
+                <span className="text-xs text-slate-400">{agruparCuentasFiadoPorAbonos(datos.cuentas || [], datos.pagos || [], "abonos").length} cuentas</span>
               </div>
               {(datos.cuentas || []).length === 0 ? <p className="text-sm text-slate-400">No hay compras al fiado registradas.</p> : (
                 <div className="space-y-3">
-                  {[...(datos.cuentas || [])].sort((a, b) => new Date(a.creado_en) - new Date(b.creado_en) || Number(a.numero) - Number(b.numero)).map((cuenta, i, lista) => {
-                    const numeroCliente = lista.slice(0, i + 1).filter(c => !c.es_historica).length;
-                    const abonosCuenta = cuenta.abonos || [];
+                  {agruparCuentasFiadoPorAbonos(datos.cuentas || [], datos.pagos || [], "abonos").map((cuenta) => {
+                    const abonosCuenta = cuenta.abonosCuenta || [];
                     const abonado = abonosCuenta.reduce((sum, a) => sum + (Number(a.monto) || 0), 0);
                     return (
-                      <div key={cuenta.id || i} className="rounded-xl border border-slate-100 p-3">
+                      <div key={cuenta.id} className="rounded-xl border border-slate-100 p-3">
                         <div className="flex items-start justify-between gap-2">
                           <div>
-                            <p className="text-sm font-semibold text-slate-800">{cuenta.es_historica ? "Saldo anterior" : `Fiado #${numeroCliente}`}</p>
-                            <p className="text-xs text-slate-400 mt-0.5">{fechaCorta(cuenta.creado_en)}</p>
+                            <p className="text-sm font-semibold text-slate-800">{cuenta.es_historica ? "Saldo anterior" : `Fiado #${cuenta.numeroCliente}`}</p>
+                            <p className="text-xs text-slate-400 mt-0.5">{fechaCorta(cuenta.creado_en)}{cuenta.ultima_compra_en && cuenta.ultima_compra_en !== cuenta.creado_en ? ` · última compra ${fechaCorta(cuenta.ultima_compra_en)}` : ""}</p>
                           </div>
                           <span className={`text-[11px] font-semibold rounded-full px-2.5 py-1 ${Number(cuenta.saldo_pendiente) <= 0 ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{Number(cuenta.saldo_pendiente) <= 0 ? "Pagada" : "Pendiente"}</span>
                         </div>
-                        {cuenta.descripcion && <p className="text-xs text-slate-500 mt-2">{cuenta.descripcion}</p>}
                         <div className="mt-2 space-y-1">
                           {(cuenta.productos || []).map((p, j) => (
                             <div key={j} className="flex justify-between text-xs text-slate-500">
